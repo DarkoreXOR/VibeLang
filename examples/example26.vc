@@ -1,0 +1,10 @@
+import { Result, print_gen } from "std/core";
+
+type Res<T> = Result<T, String>;
+
+func get(): Res<_> = Res::Ok(5); // must be infered as Result<Int, String>
+
+func main() {
+    print_gen(get());
+}
+

@@ -1,0 +1,73 @@
+//
+// example4.vc - binary and unary operators example
+//
+// description: All supported binary and unary operators and their priority
+//
+
+internal func itos(s: Int): String;
+
+internal func print(s: String);
+
+func add(a: Int, b: Int): Int {
+    return a + b;
+}
+
+func sub(a: Int, b: Int): Int {
+    return a - b;
+}
+
+func mul(a: Int, b: Int): Int {
+    return a * b;
+}
+
+func div(a: Int, b: Int): Int {
+    return a / b;
+}
+
+func mod(a: Int, b: Int): Int {
+    return a % b;
+}
+
+func pos(a: Int): Int {
+    return +a;
+}
+
+func neg(a: Int): Int {
+    return -a;
+}
+
+func inverse_bits(a: Int): Int {
+    return ~a;
+}
+
+func binary() {
+    print("add: " + itos(add(2, 3))); // must print 5
+    print("sub: " + itos(sub(2, 3))); // must print -1
+    print("mul: " + itos(mul(2, 3))); // must print 6
+    print("div: " + itos(div(11, 3))); // must print 3
+}
+
+func unary() {
+    print("lit pos: " + itos(+5)); // must print 5
+    print("lit neg: " + itos(-4)); // must print -4
+    print("lit inverse bits: " + itos(~0)); // must print -1
+    print("lit inverse bits: " + itos(~1)); // must print -2
+    print("lit inverse bits: " + itos(~-1)); // must print 0
+
+    print("func pos: " + itos(pos(5))); // must print 5
+    print("func neg: " + itos(neg(4))); // must print -4
+    print("func inverse bits: " + itos(inverse_bits(0))); // must print -1
+    print("func inverse bits: " + itos(inverse_bits(neg(1)))); // must print -2
+}
+
+func priority_chains() {
+    print(itos(1 + 2 * -3 + 17)); // must print 12
+    print(itos((1 + 2) * (-3 + 17))); // must print 42
+}
+
+func main() {
+    binary();
+    unary();
+    priority_chains();
+}
+

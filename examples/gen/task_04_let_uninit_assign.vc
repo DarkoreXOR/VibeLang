@@ -1,0 +1,10 @@
+// task_04: let without initializer, then assign, then itos/print
+
+internal func print(s: String);
+internal func itos(n: Int): String;
+
+func main() {
+    let x: Int;
+    x = 42;
+    print(itos(x));
+}

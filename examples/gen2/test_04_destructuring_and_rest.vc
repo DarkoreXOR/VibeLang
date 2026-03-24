@@ -1,0 +1,43 @@
+// test_04: tuple/array destructuring with rest `..` + nested patterns
+
+internal func print(s: String);
+internal func print_int(v: Int);
+internal func int_array_len(a: [Int]): Int;
+
+func main() {
+    // tuple rest pattern: (a, ..)
+    let tup = (1, 2, 3, 4);
+    let (first, ..) = tup;
+
+    print("tuple_rest:");
+    print_int(first);
+
+    // array rest pattern: [start, .., end]
+    let arr: [Int] = [10, 20, 30, 40];
+    let [start, .., end] = arr;
+
+    print("array_rest:");
+    print_int(start);
+    print_int(end);
+
+    // nested array destructuring
+    let m: [[Int]] = [[1, 2], [3, 4]];
+    let [[a, _], [b, c]] = m;
+
+    print("nested_array:");
+    print_int(a);
+    print_int(b);
+    print_int(c);
+
+    // negative indexing + array destructuring
+    let x: [Int] = [7, 8, 9];
+    let y = (x[-2], x[-1]);
+    let (second_last, last) = y;
+
+    print("negative_indexing:");
+    print_int(second_last);
+    print_int(last);
+
+    print_int(int_array_len(x));
+}
+

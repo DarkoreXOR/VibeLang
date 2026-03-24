@@ -1,0 +1,43 @@
+internal func print_gen<T>(value: T);
+internal func clone<T>(value: T): T; // do deep-cloning of T
+
+// structs are referenced types
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+func main() {
+    let p1 = Point { x: 1, y: 2 }; // <- correct
+    let p2 = clone(p1); // we need deep clone our struct
+
+    p1.x = 3;
+    p2.y = 4;
+
+    p1.y = p2.x;
+    p1.x = p2.y;
+
+    // let p3 = Point { x: 1, x: 2 }; // <- wrong
+    // let p4 = Point { x: 1 }; // <- wrong, missing `y`
+
+    /*
+        destructuring:
+    */
+
+    let Point { x, y } = clone(p2);
+
+    print_gen(x);
+    print_gen(y);
+
+    let Point { x: a, y: b } = clone(p2);
+
+    print_gen(a);
+    print_gen(b);
+
+    let Point { x: c, .. } = clone(p2);
+    let Point { y: d, .. } = clone(p2);
+    let Point { .., y: e } = clone(p2);
+    let Point { x: f, y: _ } = clone(p2);
+    
+}

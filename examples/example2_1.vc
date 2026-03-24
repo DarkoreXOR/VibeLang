@@ -1,0 +1,12 @@
+//
+// example2_1.vc - mininal hello world example
+//
+// description: This program prints "Hello, world" text to stdout
+//
+
+internal func print(s: String);
+
+func main() {
+    print("Hello, world!");
+}
+

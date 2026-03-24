@@ -1,0 +1,16 @@
+// task_05: if / else branches, bool condition
+
+internal func print(s: String);
+
+func main() {
+    if true {
+        print("branch_then");
+    } else {
+        print("branch_else");
+    }
+    if false {
+        print("wrong");
+    } else {
+        print("branch_else_2");
+    }
+}

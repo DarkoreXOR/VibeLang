@@ -1,0 +1,13 @@
+import { print_gen } from "std/core";
+
+func foo() = 0; // infer return type as `Int`
+
+func main() {
+    print_gen(foo());
+
+    let a; // <- unknown type here
+
+    a = foo(); // <- now we know what type for `a`, it is `Int` from return type of `foo`
+
+    let b = a; // <- now we infer type for `b` from `a`
+}

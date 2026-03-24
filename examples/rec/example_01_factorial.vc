@@ -1,0 +1,16 @@
+// example_01: recursive factorial
+
+internal func print_int(v: Int);
+
+func fact(n: Int): Int {
+    if n <= 1 {
+        return 1;
+    } else {
+        return n * fact(n - 1);
+    }
+}
+
+func main() {
+    print_int(fact(6)); // 720
+}
+

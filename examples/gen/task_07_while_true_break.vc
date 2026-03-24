@@ -1,0 +1,10 @@
+// task_07: while true + break — prints once
+
+internal func print(s: String);
+
+func main() {
+    while true {
+        print("broke");
+        break;
+    }
+}

@@ -1,0 +1,50 @@
+// test_03: nested arrays + nested indexing assignment
+
+internal func print(s: String);
+internal func print_int(v: Int);
+internal func itos(n: Int): String;
+internal func concat(a: String, b: String): String;
+internal func int_array_len(a: [Int]): Int;
+
+func transpose_2x3(m: [[Int]]): [[Int]] {
+    let rows: Int = int_array_len(m);
+    let cols: Int = int_array_len(m[0]);
+
+    // m is 2x3 in this example, so result is 3x2.
+    let t: [[Int]] = [[0, 0], [0, 0], [0, 0]];
+
+    let i: Int = 0;
+    while i < rows {
+        let j: Int = 0;
+        while j < cols {
+            t[j][i] = m[i][j];
+            j += 1;
+        }
+        i += 1;
+    }
+    return t;
+}
+
+func main() {
+    let m: [[Int]] = [[1, 2, 3], [4, 5, 6]];
+    let t: [[Int]] = transpose_2x3(m);
+
+    print("transpose:");
+
+    // show destructuring of nested arrays
+    let [[a0, a1], [b0, b1], [c0, c1]] = t;
+    print_int(a0);
+    print_int(b1);
+    print_int(c1);
+
+    // nested assignment + negative indexing
+    t[0][-1] = 999;
+    print_int(t[0][-1]);
+
+    // demonstrate tuple field access together with arrays
+    let pair = (t[1][0], t[1][1]);
+    let (p, q) = pair;
+    print(concat(itos(p), " "));
+    print(concat(itos(q), " "));
+}
+

@@ -1,0 +1,19 @@
+/*
+    There are string literals
+*/
+
+"" // empty strings
+"0" // string with number
+
+"Hello"
+"Hello, world!"
+
+"This a string with some random text"
+
+"This text\nshould\nhave\nmultiple lines separated by \n slash and `n` characters...\n\n\n"
+
+"Also it must support other escape-sequences like \" quotes \", \r - resetting"
+
+"single quote\""
+
+"...\"\"\""  "...\"\"\"\"\"\"\"\"\"\"\n\r\n\n\n\n\r\"\"\"\"\""

@@ -1,0 +1,33 @@
+import { int_array_len, itos, print_gen } from "std/core";
+
+// params keyword accepts any number of arguments
+func new_print(params p: [Any]) { print_gen(p); }
+
+// internal func new_print(params p: [Any], v: Int); <- error: params must be at the end of required parameters / after `v`
+// internal func new_print(v: Int, params p: [Any]); <- correct: v is required, `p` is not required / empty array
+
+func sum(params numbers: [Int]): Int {
+    let idx = 0;
+    let result = 0;
+    let length = int_array_len(numbers);
+
+    while length > idx {
+        result += numbers[idx];
+        idx += 1;
+    }
+    return result;
+}
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+func main() {
+    new_print("hello, world", 12, 3, true, (), Point { x: 7, y: 13 });
+
+    new_print(itos(sum(1, 2, 3, 4))); // prints 10
+
+    new_print(p: [1, 2, 3, 4]); // allowed
+}
+

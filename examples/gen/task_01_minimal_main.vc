@@ -1,0 +1,4 @@
+// task_01: empty body, no builtins — semantic + interpreter smoke test
+
+func main() {
+}

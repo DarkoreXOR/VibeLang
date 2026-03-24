@@ -1,0 +1,16 @@
+// example_03: recursive Euclid gcd
+
+internal func print_int(v: Int);
+
+func gcd(a: Int, b: Int): Int {
+    if b == 0 {
+        return a;
+    } else {
+        return gcd(b, a % b);
+    }
+}
+
+func main() {
+    print_int(gcd(48, 18)); // 6
+}
+

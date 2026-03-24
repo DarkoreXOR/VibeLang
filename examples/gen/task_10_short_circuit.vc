@@ -1,0 +1,12 @@
+// task_10: && and || short-circuit — must not evaluate RHS of && when false
+
+internal func print(s: String);
+
+func main() {
+    if false && true {
+        print("bad_and");
+    }
+    if true || false {
+        print("ok_or");
+    }
+}

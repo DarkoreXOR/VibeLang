@@ -1,0 +1,61 @@
+// ex3.vc - generic functions example
+
+// Generic identity function
+
+fn identity[T](x: T) -> T {
+    return x
+}
+
+// Generic function with multiple type parameters
+fn swap[K, V](pair: Pair[K, V]) -> Pair[V, K] {
+    return Pair[V, K](pair.get_value(), pair.get_key())
+}
+
+// Generic function with type bounds
+fn max[T extends Comparable](a: T, b: T) -> T {
+    if a > b {
+        return a
+    } else {
+        return b
+    }
+}
+
+// Generic higher-order function
+fn map[T, U](list: List[T], f: fn(T) -> U) -> List[U] {
+    let result: List[U] = List[U]()
+    let i: int = 0
+    while i < list.length() {
+        result.add(f(list.get(i)))
+        i = i + 1
+    }
+    return result
+}
+
+fn main() -> int {
+    // Type inference works!
+    let x: int = identity(42)  // T inferred as int
+    let y: string = identity("hello")  // T inferred as string
+    
+    // Generic function with explicit type arguments
+    let z: float = identity[float](3.14)
+    
+    // Swap function
+    let original: Pair[string, int] = Pair[string, int]("age", 30)
+    let swapped: Pair[int, string] = swap(original)
+    
+    // Max with different types
+    let max_int: int = max(10, 20)  // 20
+    let max_float: float = max(3.14, 2.71)  // 3.14
+    
+    // Map function
+    let numbers: List[int] = List[int]()
+    numbers.add(1)
+    numbers.add(2)
+    numbers.add(3)
+    
+    let strings: List[string] = map(numbers, fn(x: int) -> string {
+        return "Number: " + x.to_string()
+    })
+    
+    return 0
+}

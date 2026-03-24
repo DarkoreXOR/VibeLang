@@ -1,0 +1,58 @@
+import { Option, int_array_len, itos, stoi, print_gen } from "std/core";
+ 
+// For extensions methods it is required that the first parameter is `self`.
+
+// extension method for String type
+func String::to_string(self: String): String {
+    return self;
+}
+
+/*
+// Extension method for String type but without explicit type in `self`.
+func String::to_string(self): String {
+    return self;
+}
+*/
+
+ // returns string representation for integer in `self`
+func Int::to_string(self): String = itos(self);
+
+func Int::max(a: Int, b: Int): Int {
+    if a > b {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+func Int::from_string(s: String): Option<Int> {
+    return Option::Some(stoi(s));
+}
+
+func ()::to_string(self): String {
+    return "It is unit";
+}
+
+func main() {
+    let s1 = "Hello, world!".to_string();
+    print_gen(s1);
+
+    let s2 = String::to_string("This syntax is allowed too");
+    print_gen(s2);
+
+    let val = 10.to_string();
+    print_gen(val);
+
+    // true.foo(); <- error: no extension method `foo` for Bool type.
+
+    print_gen(100.max(200)); // prints 200
+
+    print_gen(Int::max(17, 13)); // prints 17
+
+    print_gen(Int::from_string("12345")); // prints Option::Some(12345)
+
+    // 100.from_string("10"); <- error: from_string is static and doesn't have self type
+
+    print_gen(().to_string().to_string().to_string()); // methods call chain prints `It is unit`
+}
+

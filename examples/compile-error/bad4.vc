@@ -1,0 +1,7 @@
+
+
+
+func main() {
+    let a;
+    let b = a;
+}

@@ -1,0 +1,11 @@
+
+let x: Int = 5;
+
+
+func main() {
+    let s;
+
+    print(s); // local `s` is not initialized here
+
+    let s2: Int = s;
+}

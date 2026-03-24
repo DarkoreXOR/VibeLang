@@ -1,0 +1,15 @@
+//
+// example3_0.vc - new function example
+//
+// description: The `add` function adds the two numbers `a` and `b` and then returns the result.
+//
+
+internal func print_int(v: Int); // VM internally prints integer `v` to stdout
+
+func add(a: Int, b: Int): Int {
+    return a + b;
+}
+
+func main() {
+    print_int(add(2, 3));
+}

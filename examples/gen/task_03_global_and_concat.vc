@@ -1,0 +1,9 @@
+// task_03: top-level let + string concat + print
+
+internal func print(s: String);
+
+let msg: String = "gen_";
+
+func main() {
+    print(msg + "global_ok");
+}

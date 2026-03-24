@@ -1,0 +1,122 @@
+internal func itos(s: Int): String;
+internal func print(s: String);
+
+
+func get_tuple(a: Int): (Int, String) {
+    return (a * a, itos(a * a));
+}
+
+func get_nested_tuple(): ((Int, (Int, Int)), Int) {
+    return ((1, (2, 3)), 4);
+}
+
+func main(): () {
+    {
+        let t = get_tuple(1); // returns (1, "1")
+    }
+
+    {
+        let t = (1, 2, 3);
+        t = (3, 2, 1); // allowed
+
+        let (a, b, c) = t; // copies t values into a, b, c
+        a = 5;
+        b = a * a;
+        c = a + b;
+
+        print(itos(a) + itos(b) + itos(c));
+    }
+
+    {
+        let t = (1, 2, 3);
+
+        let (a, b, c) = t;
+
+        a = 5;
+        b = a * a;
+        c = a + b;
+
+        print(itos(a) + itos(b) + itos(c));
+    }
+
+    {
+        let t: (Int, String) = get_tuple(2); // returns (4, "4")
+
+        print(itos(t.0)); // access the first Int value
+        print(t.1); // access the second String value
+    }
+
+    // deconstruction
+
+    {
+        let (a, b) = get_tuple(3); // returns (9, "9")
+        print(b);
+    }
+
+    {
+        let (a, b): (Int, String) = get_tuple(4); // returns (16, "16")
+        print(b);
+    }
+
+    {
+        let ((a, (b, c)), d) = get_nested_tuple();
+        print(itos(a + b + c + d)); // prints 10
+    }
+
+    {
+        let t = get_nested_tuple();
+        print(itos(t.0.0 + t.0.1.0 + t.0.1.1 + t.1)); // prints 10
+    }
+
+    {
+        let ((a, (b, c)), d) = get_nested_tuple();
+        print(itos(a + b + c + d)); // prints 10
+    }
+
+    {
+        let t;
+
+        t = (123,); // this is the tuple
+
+        print(itos(t.0)); // prints 123
+
+        // print(t); <- type error here
+    }
+
+    {
+        let t;
+
+        t = (123); // this is not the tuple, it is an Int in parens
+
+        print(itos(t));
+
+        // print(t.0); // <- type error here
+    }
+
+    // return is not required here because function return type is an empty tuple
+}
+
+/*
+
+if function doesnt have return type like main, then it means that return type is an empty tuple
+
+There are the same and equal variants:
+
+func main() {}
+func main(): () { }
+func main() { return; }
+func main() { return (); }
+func main(): () { return; }
+func main(): () { return (); }
+
+func main() {
+    let a = ();
+    return a;
+}
+
+func main(): () {
+    let b: () = ();
+    return b;
+}
+
+*/

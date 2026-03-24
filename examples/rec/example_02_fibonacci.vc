@@ -1,0 +1,16 @@
+// example_02: recursive Fibonacci
+
+internal func print_int(v: Int);
+
+func fib(n: Int): Int {
+    if n < 2 {
+        return n;
+    } else {
+        return fib(n - 1) + fib(n - 2);
+    }
+}
+
+func main() {
+    print_int(fib(10)); // 55
+}
+

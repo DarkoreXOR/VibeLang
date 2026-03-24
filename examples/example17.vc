@@ -1,0 +1,38 @@
+internal func print_gen<T>(t: T);
+internal func itos(s: Int): String;
+
+// internal func test_func(n: String = "text"); <- error: internals can not have parameters with default value
+
+func next(a: Int): Int = a + 1;
+
+func foo(a: Int = next(1), b: Bool = true) {
+    print_gen(a);
+    print_gen(b);
+}
+
+// default values allowed only at the end of function parameters:
+func bar(a: Int, b: Bool = true) {
+    print_gen(a);
+    print_gen(b);
+}
+
+func main() {
+    foo(); // use default values only
+    foo(a: 5); // allow any default value change
+    foo(b: false); // allow any default value change
+    foo(b: false, a: 7); // allow any order
+
+    // bar(); <- error: not specified `a` argument
+
+    bar(13); // a = 13, b = true
+
+    bar(17, b: false); // default arguments ordered only after required arguments
+    // bar(b: false, 17); <- error in argument ordering: `b` is before `a`
+
+    bar(17, false);
+
+    bar(b: false, a: 123); // any order allowed, because required parameters are used
+
+    // bar(b: true, b: false); <- error: duplicated `b`
+    // bar(x: true); <- error: `x` doesn't exists in function parameters
+}

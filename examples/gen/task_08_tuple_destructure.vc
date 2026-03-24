@@ -1,0 +1,11 @@
+// task_08: tuple literal, destructure, field access
+
+internal func print(s: String);
+internal func itos(n: Int): String;
+
+func main() {
+    let t = (10, 20);
+    let (a, b) = t;
+    print(itos(a + b));
+    print(itos(t.0));
+}

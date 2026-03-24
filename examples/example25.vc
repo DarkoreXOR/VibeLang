@@ -1,0 +1,17 @@
+import { rand_int, print_gen } from "std/core";
+
+func next(v: Int) = v + 1;
+
+func main() {
+    let f = k => k; // unknown `k` type now
+
+    let r; // unknown `r` type now
+
+    r = f(123); // `r` is infered as `Int` because `f` accepts `Int` and returns `Int`
+    
+    // deep inference:
+    let z = next(r); // now we know that `next` function accepts `Int` parameter, because `r` must be `Int`, so `z` is also must be `Int` here
+
+    print_gen(z);
+}
+

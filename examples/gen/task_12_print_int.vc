@@ -1,0 +1,7 @@
+// task_12: print_int builtin
+
+internal func print_int(v: Int);
+
+func main() {
+    print_int(99);
+}

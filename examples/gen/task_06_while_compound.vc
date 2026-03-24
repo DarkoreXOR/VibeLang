@@ -1,0 +1,14 @@
+// task_06: while loop, compound assignment, decrement — output should be 3
+
+internal func print(s: String);
+internal func itos(n: Int): String;
+
+func main() {
+    let n: Int = 3;
+    let sum: Int = 0;
+    while n > 0 {
+        sum += 1;
+        n -= 1;
+    }
+    print(itos(sum));
+}

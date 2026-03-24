@@ -1,0 +1,49 @@
+// ex1.vc - stack implementation
+
+struct 
+
+
+class Stack[T] {
+    private items: List[T]
+    
+    fn __init__(self) -> void {
+        self.items = List[T]()
+    }
+    
+    fn push(self, item: T) -> void {
+        self.items.add(item)
+    }
+    
+    fn pop(self) -> T {
+        return self.items.remove_last()
+    }
+    
+    fn peek(self) -> T {
+        return self.items.last()
+    }
+    
+    fn is_empty(self) -> bool {
+        return self.items.length() == 0
+    }
+}
+
+fn main() -> int {
+    // Create a stack of integers
+    let int_stack: Stack[int] = Stack[int]()
+    int_stack.push(10)
+    int_stack.push(20)
+    int_stack.push(30)
+    
+    let top: int = int_stack.pop()  // 30
+    let peeked: int = int_stack.peek()  // 20
+    
+    // Create a stack of strings
+    let str_stack: Stack[string] = Stack[string]()
+    str_stack.push("hello")
+    str_stack.push("world")
+    
+    let message: string = str_stack.pop()  // "world"
+    
+    return 0
+}
+

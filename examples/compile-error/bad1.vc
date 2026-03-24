@@ -1,0 +1,8 @@
+
+
+func f(a: Int) {}
+
+func main() {
+    f("message"); // <- type mismach
+}
+

@@ -1,0 +1,18 @@
+
+internal func print_int(v: Int);
+internal func itos(s: Int): String;
+internal func print(s: String);
+internal func int_array_len(a: [Int]): Int;
+
+internal func print_any(a: Any);
+
+func main() {
+    print_any([1, 2, 3]); // prints [1, 2, 3]
+    print_any(true); // prints true
+    print_any(5 < 4); // prints false
+    print_any((1, 2, 3)); // prints (1, 2, 3)
+    print_any(777); // prints 777
+    print_any("Hello, world!"); // prints "Hello, world", but without quotes.
+
+    print_any((1, "true", false, (1, 2, 3)));
+}

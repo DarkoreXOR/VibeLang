@@ -1,0 +1,7 @@
+// task_02: single print call
+
+internal func print(s: String);
+
+func main() {
+    print("hello_gen");
+}

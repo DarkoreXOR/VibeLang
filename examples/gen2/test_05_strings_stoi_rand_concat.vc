@@ -1,0 +1,41 @@
+// test_05: stoi + rand_int + concat + arrays of String
+
+internal func print(s: String);
+internal func print_int(v: Int);
+internal func itos(n: Int): String;
+internal func concat(a: String, b: String): String;
+internal func stoi(s: String): Int;
+internal func rand_int(to: Int): Int;
+internal func int_array_len(a: [Int]): Int;
+
+func main() {
+    let x: Int = stoi("42");
+    let r: Int = rand_int(20);
+
+    print("values:");
+    print_int(x);
+    print_int(r);
+
+    // else-if chain
+    let label: String = "low";
+    if r < 7 {
+        label = "low";
+    } else if r < 14 {
+        label = "mid";
+    } else {
+        label = "high";
+    }
+    print(label);
+
+    // string concat + arrays of String
+    let msg: String = concat(concat(itos(x), " => "), label);
+    print(msg);
+
+    let parts: [String] = [concat(label, "!"), "done"];
+    print(parts[0]);
+    print(parts[-1]); // negative indexing on String arrays
+
+    // builtin works for any array element type (`[T]`)
+    print_int(int_array_len(parts));
+}
+

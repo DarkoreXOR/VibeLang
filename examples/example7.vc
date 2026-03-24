@@ -1,0 +1,74 @@
+internal func itos(s: Int): String;
+internal func print(s: String);
+
+let g: Bool = 1 > 0 && true;
+
+func print_bool(b: Bool) {
+    if b {
+        print("true");
+    } else {
+        print("false");
+    }
+}
+
+func main() {
+    if !g {
+        print("there is a bug");
+        return;
+    }
+
+    if g == false || !g == true {
+        print("there is a bug");
+        return ();
+    }
+
+    if g == false && !g == true {
+        print("there is a bug");
+        return ();
+    }
+
+    if !g == g {
+        print("there is a bug");
+        return ();
+    }
+
+    if 1 > 1 + 1 {
+        print("there is a bug");
+        return ();
+    }
+
+    print("All above conditions are false");
+
+    if 1 >= 0 {
+        print("One is equeal or greater than zero");
+    } else {
+        print("Zero is greater than one, but there is a bug!");
+    }
+
+    print_bool(0 == 0); // true
+    print_bool(3 != 3); // false
+    print_bool(1 > 0); // true
+    print_bool(3 >= 3); // true
+    print_bool(2 < 2); // false
+    print_bool(3 <= 3); // true
+    print_bool(1 + 1 > 0 || false); // true
+
+    print_bool(false && false); // false
+    print_bool(false && true); // false
+    print_bool(true && false); // false
+    print_bool(true && true); // true
+
+    print_bool(false || false); // false
+    print_bool(false || true); // true
+    print_bool(true || false); // true
+    print_bool(true || true); // true
+
+    print_bool(!false); // true
+    print_bool(!true); // false
+
+    print_bool(false && true || true && true); // false (`&&` has higher priority than `||`)
+    print_bool(false || true && true || false); // true (`&&` has higher priority than `||`)
+
+
+    print_bool(!true || !false && !false || !true); // true (`!` is higher than `&&`, `&&` is higher than `||`)
+}

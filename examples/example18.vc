@@ -1,0 +1,10 @@
+import { Option, Result, print_gen } from "std/core";
+
+func main() {
+    let opt = Option<()>::None;
+    print_gen(opt);
+
+    let res = Result<String, _>::Err(false);
+    print_gen(res);
+}
+

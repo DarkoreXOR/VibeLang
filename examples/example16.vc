@@ -1,0 +1,51 @@
+internal func print_gen<T>(t: T);
+internal func itos(s: Int): String;
+
+enum Option<T> {
+    None,
+    Some(T), // last comma is optional
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E) // last comma is optional
+}
+
+enum MyType {
+    Void,
+    Integer,
+    Float,
+    Boolean, // last comma is optional
+}
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+struct Rect {
+    p1: Point,
+    p2: Point,
+}
+
+func get_point() = Option::Some(Point { x: 10, y: 20 });
+
+func main() {
+    match get_point() {
+        Option::Some(Point { x: 1, y: 2 }) => print_gen("1, 2"),
+        Option::Some(Point { x: 10, y: 2 }) => print_gen("10, 2"),
+        Option::Some(Point { x: 1, y: 20 }) => print_gen("1, 20"),
+
+        Option::Some(Point { x, y }) => {
+            print_gen("10, 20");
+        },
+
+        Option::None => {
+            print_gen("None");
+        }
+        
+        // latest comma is optional here
+    }
+}
+
+

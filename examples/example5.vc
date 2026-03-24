@@ -1,0 +1,35 @@
+internal func itos(s: Int): String;
+internal func print(s: String);
+
+// Global let is allowed, but must be assigned immediately. Global uninitialized variables are not allowed.
+let global_text: String = "This is a global variable";
+
+func main() {
+    print(global_text);
+
+    let a: Int;
+    let b: Int = 7;
+
+    // next line will cause an error, because it uses uninitialized variable.
+    // print(a + b);
+
+    a = 6;
+
+    print("a + b = " + itos(a + b)); // must be 13
+
+    {
+        // inner scope
+
+        let a: Int = 10;
+
+        print("a + b = " + itos(a + b)); // must be 17
+
+        {
+            // another inner scope
+
+            let b: String = "Type for variable `b` is changed";
+
+            print(b);
+        }
+    }
+}

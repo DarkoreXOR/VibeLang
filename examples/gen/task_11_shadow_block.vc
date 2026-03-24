@@ -1,0 +1,13 @@
+// task_11: inner block shadows outer binding
+
+internal func print(s: String);
+internal func itos(n: Int): String;
+
+func main() {
+    let k: Int = 1;
+    {
+        let k: Int = 100;
+        print(itos(k));
+    }
+    print(itos(k));
+}

@@ -1,0 +1,57 @@
+// test_01: bubble sort + else-if + while break/continue + tuple/array destructuring
+
+internal func print(s: String);
+internal func print_int(v: Int);
+internal func itos(n: Int): String;
+internal func int_array_len(a: [Int]): Int;
+
+func bubble_sort(a: [Int]): [Int] {
+    let n: Int = int_array_len(a);
+    let pass: Int = 0;
+    while pass < n {
+        let did_swap: Bool = false;
+        let j: Int = 0;
+
+        while j + 1 < n {
+            if a[j] == a[j + 1] {
+                j += 1;
+                continue;
+            } else if a[j] > a[j + 1] {
+                let tmp: Int = a[j];
+                a[j] = a[j + 1];
+                a[j + 1] = tmp;
+                did_swap = true;
+            }
+            j += 1;
+        }
+
+        if !did_swap {
+            break;
+        }
+        pass += 1;
+    }
+
+    return a;
+}
+
+func main() {
+    let a: [Int] = [5, 1, 4, 2, 8, 3, 7, 6];
+    let sorted: [Int] = bubble_sort(a);
+
+    print("sorted:");
+    print_int(sorted[0]);
+    print_int(sorted[-1]); // negative indexing
+
+    let [first, ..] = sorted;
+    print_int(first);
+
+    let t = (sorted[1], sorted[2]);
+    let (second, third) = t;
+    print_int(second);
+    print_int(third);
+
+    let [x, y, ..] = sorted;
+    print_int(x);
+    print_int(y);
+}
+

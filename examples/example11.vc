@@ -1,0 +1,15 @@
+
+
+internal func print_gen<T>(value: T);
+
+func main() {
+    print_gen<[Int]>([1, 2, 3]); // prints [1, 2, 3]
+    print_gen<Bool>(true); // prints true
+    print_gen(5 < 4); // prints false
+    print_gen((1, 2, 3)); // prints (1, 2, 3)
+    print_gen<Int>(777); // prints 777
+    print_gen("Hello, world!"); // prints "Hello, world", but without quotes.
+
+    print_gen((1, "true", false, (1, 2, 3)));
+}
+

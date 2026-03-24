@@ -1,0 +1,47 @@
+// ex2.vc - pair or tuple example
+
+class Pair[K, V] {
+    key: K
+    value: V
+    
+    fn __init__(self, key: K, value: V) -> void {
+        self.key = key
+        self.value = value
+    }
+    
+    fn get_key(self) -> K {
+        return self.key
+    }
+    
+    fn get_value(self) -> V {
+        return self.value
+    }
+    
+    fn set_key(self, key: K) -> void {
+        self.key = key
+    }
+    
+    fn set_value(self, value: V) -> void {
+        self.value = value
+    }
+}
+
+fn main() -> int {
+    // String to int mapping
+    let age: Pair[string, int] = Pair[string, int]("Alice", 30)
+    let name: string = age.get_key()
+    let years: int = age.get_value()
+    
+    // Int to float mapping
+    let coordinates: Pair[int, float] = Pair[int, float](1, 3.14)
+    let x: int = coordinates.get_key()
+    let y: float = coordinates.get_value()
+    
+    // Nested generic types
+    let nested: Pair[string, Pair[int, bool]] = Pair[string, Pair[int, bool]](
+        "status",
+        Pair[int, bool](200, true)
+    )
+    
+    return 0
+}

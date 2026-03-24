@@ -1,0 +1,7 @@
+
+let x: Int = x; // <- no variable `x` yet
+let y: Int = x;
+
+func main(): Int { // <- wrong main signature
+
+}

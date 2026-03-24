@@ -1,0 +1,32 @@
+import { print_gen, itos } from "std/core";
+
+// Task<T> is internal struct for VM. It internally contains information for async operation for runtime.
+internal struct Task<T = ()>; // <- Also it contains default generic type value for T, so we can use `Task` without full version `Task<()>`. Generic default type value can be extended to all generics in language design.
+
+// internal `sleep` function creates `Task<()>` that will be completed after `milliseconds` timeout.
+internal async func sleep(milliseconds: Int): Task; // <- we are using `Task` with default type value `()`, so we don't use full `Task<()>` but only `Task`
+
+async func get(n: Int): Task<Int> { // async functions always return some `Task<..>` in this case it is `Task<Int>`
+    print_gen("Waiting for " + itos(n) + " seconds...");
+
+    await sleep(n * 1000); // wait `n` seconds...
+
+    print_gen("Finished...\n");
+
+    return n; // <- we return `Int`, but this implicitly wrapped into `Task<Int>`
+}
+
+// now it is possible `main` to be an `async` function and `await` any async operation
+async func main(): Task { // async functions always require `Task<...>` as return type
+    let r = get(5); // `Task<Int>` (pending until awaited)
+    let res = await r; // runs the task; after the sleep completes, `res` is `5`
+
+    print_gen(itos(res));
+}
+
+/*
+    Task<T> states:
+    * `pending` - when task is created
+    * `completed` - when task is done its work
+*/
+

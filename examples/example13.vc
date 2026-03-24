@@ -1,0 +1,15 @@
+
+
+internal func print_gen<T>(t: T);
+
+/*
+  short-hand syntax: just returns `a`
+  long version syntax: func get(a: Int) { return a; }
+*/
+func get(a: Int) = a;
+
+func get2<T>(a: T) = a;
+
+func main() {
+    print_gen(get2(3));
+}

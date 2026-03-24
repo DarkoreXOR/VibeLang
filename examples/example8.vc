@@ -1,0 +1,21 @@
+internal func itos(s: Int): String;
+internal func print(s: String);
+
+
+func main() {
+
+    let counter = 10;
+    let total = 0;
+
+    while counter > 0 {
+        if total == 0 {
+            total += 1;
+        } else {
+            total *= 2;
+        }
+        
+        counter -= 1;
+    }
+
+    print(itos(total));
+}

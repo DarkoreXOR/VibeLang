@@ -1,0 +1,68 @@
+import { print_gen } from "std/core";
+
+struct Void {}
+
+struct None;
+
+struct Generic<T> {
+    a: T,
+    b: T,
+}
+
+struct UnitGeneric<T>;
+
+func Void::foo<T>(x: T): T {
+    return x;
+}
+
+func Void::bar<T>(self, x: T): T {
+    return x;
+}
+
+func None::foo(): None {
+    return None;
+}
+
+func None::bar(self): None {
+    return None;
+}
+
+func main() {
+    print_gen(Void::foo(123));
+    print_gen(Void{}.bar(456));
+
+    print_gen(Void {});
+
+
+    print_gen(None::foo()); // <- None it type here
+    print_gen(None.foo()); // <- None is constructor here
+
+    // print_gen(None::bar()); <- compile eror: no self argument here
+
+    print_gen(None.bar());
+
+    let g = Generic { a: 7, b: 8 }; // infers as Generic<Int>
+    let g2 = Generic<Int> { a: 9, b: 10 };
+
+    print_gen(g);
+    print_gen(g2);
+
+    let ug = UnitGeneric<Int>;
+    print_gen(ug);
+
+    // pattern matching:
+
+    if let Generic { a: p1, b: p2 } = g { // `b` == 8 in `g`, so condition is true
+        print_gen("it works!");
+        print_gen(p2);
+    } else {
+        print_gen("something wrong here");
+    }
+
+   
+    if let UnitGeneric<Int> = ug { // <- this pattern matching must not compile, because it has mismatched types (different generic types)
+        print_gen("it works!");
+    } else {
+        print_gen("something wrong here");
+    }
+}

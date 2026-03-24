@@ -1,0 +1,41 @@
+
+internal func print_gen<T>(t: T);
+
+enum Option<T> {
+    None,
+    Some(T), // last comma is optional
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E) // last comma is optional
+}
+
+enum MyType {
+    Void,
+    Integer,
+    Float,
+    Boolean, // last comma is optional
+}
+
+func get_opt(n: Int): Option<Int> = Option::Some(n);
+
+func main() {
+
+    let opt1 = Option::Some(123);
+    let opt2: Option<String> = Option::None;
+
+    // let opt3 = Option::None; <- error: we can not infer type for Option<...>
+    
+    let opt3 = get_opt(123);
+
+    let opt4 = Option<Int>::None;
+
+    // let res1 = Result::Ok(5); <- error: we can not infer errror type
+    // let res2 = Result::Err("Could not open file"); <- error: we can not infer ok type
+
+    let res3: Result<String, Int> = Result::Ok("it works");
+    let res4: Result<Int, String> = Result::Err("some error occurred");
+
+    let res5 = Result<_, String>::Ok(true);
+}

@@ -1,0 +1,10 @@
+//
+// example1.vc - mininal example
+//
+// description: minimal program that does nothing
+//
+
+func main() {
+    // nothing to do
+}
+

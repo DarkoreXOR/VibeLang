@@ -1,0 +1,37 @@
+import { print_gen, Result } from "std/core";
+
+func [Int]::len(self): Int {
+    return 123;
+}
+
+func [String]::len(self): Int {
+    return 456;
+}
+
+func [()]::len(self): Int {
+    return 999;
+}
+
+func [type T]::len<T>(self): Int {
+    return 789;
+}
+
+func [Result<type T1, type T2>]::len<T1, T2>(self): Int {
+    return 12345;
+}
+
+func Result<type T, type E>::is_ok<T, E>(self): Bool {
+    return true;
+}
+
+func main() {
+    print_gen([1, 2, 3, 4, 5].len()); // prints 123
+    print_gen(["Hello"].len()); // prints 456
+    print_gen([true].len()); // prints 789
+    print_gen([()].len()); // prints 789
+    // print_gen([].len()); <- error: can not infer array type here
+
+    print_gen([Result<_, String>::Ok(987654321)].len());
+
+    print_gen(Result<_, String>::Ok("hello").is_ok());
+}

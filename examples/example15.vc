@@ -1,0 +1,105 @@
+internal func print_gen<T>(t: T);
+internal func itos(s: Int): String;
+
+enum Option<T> {
+    None,
+    Some(T), // last comma is optional
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E) // last comma is optional
+}
+
+enum MyType {
+    Void,
+    Integer,
+    Float,
+    Boolean, // last comma is optional
+}
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+struct Rect {
+    p1: Point,
+    p2: Point,
+}
+
+func get_point() = Point { x: 10, y: 20 };
+
+func main() {
+    let opt1 = Option<Int>::None;
+
+    if let Option::None = opt1 {
+        print_gen("This is none");
+    } else {
+        print_gen("This is some");
+    }
+
+    let opt2 = Option::Some(123);
+
+    if let Option::Some(v) = opt2 {
+        print_gen("This is some in opt2");
+    } else if let Option::None = opt2 {
+        print_gen("This is none in opt2");
+    }
+
+    print_gen(opt1);
+    print_gen(opt2);
+
+    if let Point { x, y } = get_point() {
+        print_gen("there are x and y in point:");
+        print_gen("px: " + itos(x));
+        print_gen("py: " + itos(y));
+    } else {
+        print_gen("some bug here"); // <- unreachable
+    }
+
+    if let Point { x, y: _ } = get_point() {
+        print_gen("there is x in point:");
+        print_gen("px: " + itos(x));
+    } else {
+        print_gen("some bug here"); // <- unreachable
+    }
+
+    if let Point { x, .. } = get_point() {
+        print_gen("there is x in point:");
+        print_gen("px: " + itos(x));
+    } else {
+        print_gen("some bug here"); // <- unreachable
+    }
+
+    if let Point { x: _, y } = get_point() {
+        print_gen("there is y in point:");
+        print_gen("py: " + itos(y));
+    } else {
+        print_gen("some bug here"); // <- unreachable
+    }
+
+    if let Point { y, .. } = get_point() {
+        print_gen("there is y in point:");
+        print_gen("py: " + itos(y));
+    } else {
+        print_gen("some bug here"); // <- unreachable
+    }
+
+    let rect1 = Rect { 
+        p1: Point {
+            x: 0,
+            y: 1
+        },
+        p2: Point {
+            x: 2,
+            y: 3
+        }, // <- optional comma here
+    };
+
+    if let Rect { p1, p2: Point { x: px, y: py }} = rect1 {
+        print_gen(p1);
+        print_gen(px);
+        print_gen(py);
+    }
+}

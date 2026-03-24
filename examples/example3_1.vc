@@ -1,0 +1,20 @@
+//
+// example3_1.vc - new function example
+//
+// description: The `add` function adds the two numbers `a` and `b` and then returns the result.
+//
+
+internal func itos(s: Int): String; // VM internally converts integer to string value
+
+internal func concat(s1: String, s2: String): String; // VM internally doing concatination of strings `s1` and `s2` and then returns the result
+
+internal func print(s: String); // VM internally prints string `s` to stdout
+
+func add(a: Int, b: Int): Int {
+    return a + b;
+}
+
+func main() {
+    print(concat("sum: ", itos(add(2, 3))));
+}
+

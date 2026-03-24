@@ -1,0 +1,96 @@
+import { print_gen } from "std/core";
+
+func sum(a: Int, b: Int) = a + b;
+
+func foo() = () => (() => 123); // infered return type as `() => (() => Int)` or lambda returning other lambda. Parens are required for nested lambda.
+func bar(): () => (() => Int) = () => (() => 456); // Parens are required for nested lambda.
+
+func capture(x: Int) { // return type is infered as `(Int) => Int`
+    return (y) => x * x + y; // `y` type is infered from `x` type
+}
+
+func main() {
+    let f1: () => Int = () => 123; // <- lambda expression with it's type, but without parameters
+    let f2 = () => 456; // <- lambda expression without it's type and without parameters
+
+    let f3: (Int) => Int; // <- lambda expression that has one parameter `Int` and return type `Int`
+
+    // assign lambda function to `f3`:
+    f3 = (x) => x + 1; // <- increase value by one
+
+    print_gen(f1()); // <- no lambda arguments
+    print_gen(f2()); // <- no lambda arguments
+    print_gen(f3(5)); // <- one lambda argument `5`, it returns `6`
+
+    // f3(x: 7) <- error: this lambda functions doesn't have named parameters
+
+    let f4: (x: Int) => Int;
+    f4 = (a) => a * a; // single parameter with parens
+    
+    print_gen(f4(x: 7)); // allowed named parameter, because lambda type has it too.
+
+    f4 = a => a + a; // single parameter without parens
+
+    print_gen(f4(x: 15)); // allowed named parameter, because lambda type has it too.
+
+    // let f5: (x: Int, params [Int]) => Int; // `params` keyword is not supported for lambdas
+
+    let f6: (x: Int, y: Int = 7) = (a, b) => a * b; // default value parameters are allowed and behave the same as functions
+
+    print_gen(f6(y: 0, x: -1)); // prints 0
+
+    // print_gen(y: 0); <- error: required `x` is not used
+
+    // allow multiple calls for lambda:
+    print_gen(f1());
+    print_gen(f1());
+    print_gen(f1());
+
+    let f7 = (x, y) => { // `x` and `y` types and return type must be infered by usage in it's body
+        // this is lambda with the scoped body
+
+        let idx = 0;
+        let total = 0;
+
+        while idx < x {
+            total += x;
+            idx += 1;
+        }
+
+        idx = 0;
+
+        while idx < y {
+            total += y;
+            idx += 1;
+        }
+
+        return total; // lambda infered return type is `Int` now
+    };
+
+    print_gen(f7(5, 6));
+
+    let f8: (Int, Int) => Int = f7; // lambdas have the same type.
+
+    print_gen(f7(5, 6)); // the same result as after the previous print
+
+    let f9 = sum; // lambda type is infered as `(Int, Int) => Int`
+
+    print_gen(f9(3, 4)); // prints 7
+
+    print_gen(foo()()()); // prints 123
+    print_gen(bar()()()); // prints 456
+
+    let cap = capture(5);
+
+    print_gen(cap(0)); // prints 25
+    print_gen(cap(1)); // prints 26
+    print_gen(cap(2)); // prints 27
+
+    // infer everything:
+
+    let z = (x) => x; // <- unknown type here
+
+    //print_gen(z(5)); // prints `5`
+    print_gen(z("Hello")); // <- error: infered types mismatch, but if we comment previous line with `Int` inference, current `String` inference line must compile then.
+}
+

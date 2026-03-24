@@ -1,0 +1,58 @@
+// example_05: quicksort using recursion + in-place partitioning
+
+internal func print_int(v: Int);
+internal func int_array_len(a: [Int]): Int;
+
+func swap(a: [Int], i: Int, j: Int): () {
+    let tmp: Int = a[i];
+    a[i] = a[j];
+    a[j] = tmp;
+    return;
+}
+
+func quicksort(a: [Int], lo: Int, hi: Int): () {
+    if lo >= hi {
+        return;
+    }
+
+    let pivot: Int = a[(lo + hi) / 2];
+    let i: Int = lo;
+    let j: Int = hi;
+
+    while i <= j {
+        while i <= j && a[i] < pivot {
+            i += 1;
+        }
+        while i <= j && a[j] > pivot {
+            j -= 1;
+        }
+        if i <= j {
+            swap(a, i, j);
+            i += 1;
+            j -= 1;
+        }
+    }
+
+    if lo < j {
+        quicksort(a, lo, j);
+    }
+    if i < hi {
+        quicksort(a, i, hi);
+    }
+
+    return;
+}
+
+func main() {
+    let a: [Int] = [9, 3, 7, 1, 8, 2, 5, 6, 4];
+    let n: Int = int_array_len(a);
+
+    quicksort(a, 0, n - 1);
+
+    let k: Int = 0;
+    while k < n {
+        print_int(a[k]);
+        k += 1;
+    }
+}
+
