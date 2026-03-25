@@ -82,6 +82,20 @@ impl Parser {
             TokenKind::Export => {
                 let export_span = self.peek().span;
                 self.advance(); // `export`
+                // `export name as name;`
+                if matches!(self.peek().kind, TokenKind::Identifier(_))
+                    && matches!(self.peek_n(1).kind, TokenKind::As)
+                {
+                    let (from, _) = self.take_identifier()?;
+                    self.advance(); // `as`
+                    let (to, _) = self.take_identifier()?;
+                    self.expect_semicolon()?;
+                    return Ok(AstNode::ExportAlias {
+                        from,
+                        to,
+                        span: export_span,
+                    });
+                }
                 let item = match self.peek().kind {
                     TokenKind::Struct => self.parse_struct_definition(false)?,
                     TokenKind::Enum => self.parse_enum_definition()?,
@@ -191,7 +205,8 @@ impl Parser {
             | TokenKind::Dot
             | TokenKind::DotDot
             | TokenKind::FatArrow
-            | TokenKind::From => Err(ParseError::UnexpectedToken {
+            | TokenKind::From
+            | TokenKind::As => Err(ParseError::UnexpectedToken {
                 message: "unexpected punctuation".to_string(),
                 span: Some(self.peek().span),
             }),
@@ -375,11 +390,17 @@ impl Parser {
         let span = self.peek().span;
         self.advance(); // import
         self.expect_lbrace()?;
-        let mut names = Vec::new();
+        let mut bindings = Vec::new();
         if !matches!(self.peek().kind, TokenKind::RBrace) {
             loop {
-                let (name, name_span) = self.take_identifier()?;
-                names.push((name, name_span));
+                let (export_name, _) = self.take_identifier()?;
+                let local_name = if matches!(self.peek().kind, TokenKind::As) {
+                    self.advance();
+                    self.take_identifier()?.0
+                } else {
+                    export_name.clone()
+                };
+                bindings.push((export_name, local_name));
                 if matches!(self.peek().kind, TokenKind::Comma) {
                     self.advance();
                     continue;
@@ -409,7 +430,7 @@ impl Parser {
         };
         self.expect_semicolon()?;
         Ok(AstNode::Import {
-            names,
+            bindings,
             module_path,
             span,
         })
@@ -1872,7 +1893,8 @@ impl Parser {
             | TokenKind::Dot
             | TokenKind::DotDot
             | TokenKind::ColonColon
-            | TokenKind::From => Err(ParseError::UnexpectedToken {
+            | TokenKind::From
+            | TokenKind::As => Err(ParseError::UnexpectedToken {
                 message: "unexpected punctuation".to_string(),
                 span: Some(self.peek().span),
             }),

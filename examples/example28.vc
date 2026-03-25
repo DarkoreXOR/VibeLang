@@ -1,0 +1,24 @@
+import { print_gen } from "std/core";
+import { Task, sleep } from "std/async";
+
+async func t1(): Task {
+    print_gen("Waiting for 5 seconds...");
+    await sleep(5000);
+    print_gen("Finished 5 seconds");
+}
+
+async func t2(): Task {
+    print_gen("Waiting for 7 seconds...");
+    await sleep(7000);
+    print_gen("Finished 7 seconds");
+}
+
+async func t3(): Task {
+    print_gen("Waiting for 11 seconds...");
+    await sleep(11000);
+    print_gen("Finished 11 seconds");
+}
+
+async func main(): Task {
+    await Task::wait_all(t1(), t2(), t3());
+}

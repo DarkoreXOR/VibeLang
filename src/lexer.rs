@@ -32,6 +32,8 @@ pub enum TokenKind {
     Import,
     /// Keyword `export`
     Export,
+    /// Keyword `as` (import/export rename)
+    As,
     /// Keyword `from`
     From,
     /// Keyword `params`
@@ -335,6 +337,7 @@ impl Lexer {
             "import" => TokenKind::Import,
             "export" => TokenKind::Export,
             "from" => TokenKind::From,
+            "as" => TokenKind::As,
             "params" => TokenKind::Params,
             "type" => TokenKind::Type,
             "_" => TokenKind::Underscore,

@@ -2,8 +2,9 @@
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::bytecode::{Instr, ProgramBytecode};
+use crate::async_runtime::{AsyncRuntime, TaskId};
 use crate::error::Span;
-use crate::value::{StructInstance, TaskInner, Value};
+use crate::value::{StructInstance, Value};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Signed, ToPrimitive, Zero};
 use std::cell::RefCell;
@@ -42,6 +43,46 @@ impl std::fmt::Display for VmError {
 
 impl std::error::Error for VmError {}
 
+fn push_user_call_frame(
+    bytecode: &ProgramBytecode,
+    frames: &mut Vec<Frame>,
+    operand_stack: &mut Vec<Value>,
+    func: &str,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<(), VmError> {
+    let func_index = bytecode
+        .function_map
+        .get(func)
+        .copied()
+        .ok_or_else(|| VmError::new(format!("unknown function `{func}` in await"), Some(span)))?;
+    let func_bc = &bytecode.functions[func_index];
+    let mut locals = vec![None; func_bc.local_count as usize];
+    if args.len() != func_bc.param_count {
+        return Err(VmError::new(
+            format!(
+                "wrong arity in deferred await: expected {}, got {}",
+                func_bc.param_count,
+                args.len()
+            ),
+            Some(span),
+        ));
+    }
+    for (i, slot_opt) in func_bc.param_slots.iter().enumerate() {
+        if let Some(slot) = slot_opt {
+            locals[*slot as usize] = Some(args[i].clone());
+        }
+    }
+    let stack_base = operand_stack.len();
+    frames.push(Frame {
+        kind: FrameKind::User { func_index },
+        ip: 0,
+        locals,
+        stack_base,
+    });
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum FrameKind {
     Init,
@@ -56,6 +97,23 @@ struct Frame {
     stack_base: usize,
 }
 
+#[derive(Debug)]
+enum TaskContext {
+    User {
+        frames: Vec<Frame>,
+        operand_stack: Vec<Value>,
+    },
+    WaitAll { tasks: Vec<TaskId>, idx: usize },
+    Sleep,
+}
+
+#[derive(Debug)]
+enum TaskOutcome {
+    Continue,
+    YieldAwaited { awaited: TaskId },
+    Completed(Value),
+}
+
 pub fn run_program(bytecode: &ProgramBytecode) -> Result<(), VmError> {
     run_program_with_builtins(bytecode, crate::builtins::default_registry_ref())
 }
@@ -65,15 +123,6 @@ pub fn run_program_with_builtins(
     builtins: &crate::builtins::BuiltinRegistry,
 ) -> Result<(), VmError> {
     let mut globals: Vec<Option<Value>> = vec![None; bytecode.globals_count as usize];
-    let mut operand_stack: Vec<Value> = Vec::new();
-
-    let mut frames: Vec<Frame> = Vec::new();
-    frames.push(Frame {
-        kind: FrameKind::Init,
-        ip: 0,
-        locals: Vec::new(),
-        stack_base: 0,
-    });
 
     let main_idx = bytecode
         .function_map
@@ -81,9 +130,155 @@ pub fn run_program_with_builtins(
         .copied()
         .ok_or_else(|| VmError::new("missing `main` function in bytecode", None))?;
 
+    let mut runtime: AsyncRuntime<TaskContext> = AsyncRuntime::new();
+    let main_ctx = TaskContext::User {
+        frames: vec![Frame {
+            kind: FrameKind::Init,
+            ip: 0,
+            locals: Vec::new(),
+            stack_base: 0,
+        }],
+        operand_stack: Vec::new(),
+    };
+    let main_task_id = runtime.spawn_ready(main_ctx);
+
+    let start = std::time::Instant::now();
+    const INSTR_BUDGET: usize = 64;
+
+    while !runtime.is_completed(main_task_id) {
+        let now_ms = start.elapsed().as_millis() as u64;
+        runtime.wake_expired_timers(now_ms);
+
+        // If there is at least one ready task, run it for a bounded budget.
+        if let Some(task_id) = runtime.pop_ready() {
+            let ctx = runtime.take_ready_ctx(task_id).expect("task must be Ready");
+            match ctx {
+                TaskContext::Sleep => {
+                    runtime.complete(task_id, Value::Unit);
+                }
+                TaskContext::WaitAll { tasks, mut idx } => {
+                    loop {
+                        if idx >= tasks.len() {
+                            runtime.complete(task_id, Value::Unit);
+                            break;
+                        }
+                        let awaited = tasks[idx];
+                        if runtime.is_completed(awaited) {
+                            idx += 1;
+                            continue;
+                        }
+                        // Not completed yet: yield by registering as a waiter.
+                        runtime.set_waiting_on(
+                            task_id,
+                            TaskContext::WaitAll { tasks, idx },
+                            awaited,
+                        );
+                        break;
+                    }
+                }
+                TaskContext::User {
+                    frames,
+                    operand_stack,
+                } => {
+                    let mut frames_opt = Some(frames);
+                    let mut operand_opt = Some(operand_stack);
+                    let mut yielded_or_completed = false;
+
+                    for _ in 0..INSTR_BUDGET {
+                        let frames_ref = frames_opt.as_mut().expect("frames must exist");
+                        let operand_ref =
+                            operand_opt.as_mut().expect("operand_stack must exist");
+
+                        match vm_execute_tick(
+                            bytecode,
+                            &mut globals,
+                            frames_ref,
+                            operand_ref,
+                            builtins,
+                            main_idx,
+                            &mut runtime,
+                            task_id,
+                            now_ms,
+                        )? {
+                            TaskOutcome::Continue => {}
+                            TaskOutcome::YieldAwaited { awaited } => {
+                                let frames = frames_opt.take().expect("frames must exist");
+                                let operand_stack =
+                                    operand_opt.take().expect("operand_stack must exist");
+                                runtime.set_waiting_on(
+                                    task_id,
+                                    TaskContext::User { frames, operand_stack },
+                                    awaited,
+                                );
+                                yielded_or_completed = true;
+                                break;
+                            }
+                            TaskOutcome::Completed(val) => {
+                                runtime.complete(task_id, val);
+                                // Drop ctx; it is now stored as Completed in the runtime.
+                                frames_opt.take();
+                                operand_opt.take();
+                                yielded_or_completed = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !yielded_or_completed {
+                        let frames = frames_opt
+                            .take()
+                            .expect("frames must exist after budgeting");
+                        let operand_stack = operand_opt
+                            .take()
+                            .expect("operand_stack must exist after budgeting");
+                        runtime.set_ready(
+                            task_id,
+                            TaskContext::User {
+                                frames,
+                                operand_stack,
+                            },
+                        );
+                    }
+                }
+            }
+            continue;
+        }
+
+        // No ready tasks; if there are timers, sleep until the next deadline.
+        if let Some(deadline_ms) = runtime.next_timer_deadline_ms() {
+            if deadline_ms > now_ms {
+                let sleep_for = deadline_ms - now_ms;
+                std::thread::sleep(std::time::Duration::from_millis(sleep_for));
+            }
+            // Next iteration will wake expired timers.
+            continue;
+        }
+
+        // Nothing ready and no timers means the program is stuck.
+        return Err(VmError::new(
+            "deadlock: no ready tasks and no timers",
+            None,
+        ));
+    }
+
+    Ok(())
+}
+
+fn vm_execute_tick(
+    bytecode: &ProgramBytecode,
+    globals: &mut Vec<Option<Value>>,
+    frames: &mut Vec<Frame>,
+    operand_stack: &mut Vec<Value>,
+    builtins: &crate::builtins::BuiltinRegistry,
+    main_idx: usize,
+    runtime: &mut AsyncRuntime<TaskContext>,
+    _task_id: TaskId,
+    now_ms: u64,
+) -> Result<TaskOutcome, VmError> {
     loop {
         let Some(frame) = frames.last_mut() else {
-            break;
+            // An empty frame stack means the current task has nothing left to run.
+            return Ok(TaskOutcome::Completed(Value::Unit));
         };
 
         let code_len = match frame.kind {
@@ -602,13 +797,22 @@ pub fn run_program_with_builtins(
                 }
                 args.reverse();
 
+                // Internal `async func` must be invoked via `MakeDeferredTask` + `await`,
+                // not via synchronous `Call`.
+                if callee == "wait_all_tasks_async" || callee == "sleep" {
+                    return Err(VmError::new(
+                        format!("`{callee}` is async and must be awaited"),
+                        Some(span),
+                    ));
+                }
+
                 // Builtins (shared dispatch)
                 if builtins.get(&callee).is_some() {
                     let v = builtins
                         .eval_builtin(&callee, args, span)
                         .map_err(|e| VmError::new(e.message, e.span))?;
                     operand_stack.push(v);
-                    continue;
+                    return Ok(TaskOutcome::Continue);
                 }
 
                 // User function call
@@ -728,125 +932,89 @@ pub fn run_program_with_builtins(
                     );
                 }
                 args.reverse();
-                operand_stack.push(Value::Task(TaskInner::Deferred { func, args }));
+
+                // Spawn a new task in the async runtime and push its handle.
+                let canonical = match func.as_str() {
+                    "sleep_async" => "sleep",
+                    other => other,
+                };
+
+                if canonical == "sleep" {
+                    // `sleep(ms)` completes after `ms` milliseconds.
+                    let ms = match args.into_iter().next() {
+                        Some(Value::Int(i)) => i.to_u64().unwrap_or(u64::MAX),
+                        _ => {
+                            return Err(VmError::new(
+                                "sleep expects an Int(milliseconds) argument",
+                                Some(span),
+                            ))
+                        }
+                    };
+                    let ms = ms.min(u64::from(u32::MAX));
+                    let deadline_ms = now_ms.saturating_add(ms);
+                    let tid = runtime.spawn_sleeping(TaskContext::Sleep, deadline_ms);
+                    operand_stack.push(Value::Task(tid));
+                } else if canonical == "wait_all_tasks_async" {
+                    // `wait_all_tasks_async([Task<T>, ...])` - implemented as a
+                    // state machine task that sequentially awaits each handle.
+                    let tasks_vec = match args.into_iter().next() {
+                        Some(Value::Array(elements)) => elements,
+                        _ => {
+                            return Err(VmError::new(
+                                "`wait_all_tasks_async` expects a single array parameter",
+                                Some(span),
+                            ))
+                        }
+                    };
+
+                    let mut task_ids = Vec::with_capacity(tasks_vec.len());
+                    for elem in tasks_vec {
+                        let Value::Task(id) = elem else {
+                            return Err(VmError::new(
+                                "`wait_all_tasks_async` expects each element to be a Task",
+                                Some(span),
+                            ));
+                        };
+                        task_ids.push(id);
+                    }
+
+                    let tid = runtime.alloc_id();
+                    runtime.set_ready(tid, TaskContext::WaitAll { tasks: task_ids, idx: 0 });
+                    operand_stack.push(Value::Task(tid));
+                } else {
+                    // User async function call: create a new execution context.
+                    let tid = runtime.alloc_id();
+                    let mut frames: Vec<Frame> = Vec::new();
+                    let mut task_stack: Vec<Value> = Vec::new();
+                    push_user_call_frame(bytecode, &mut frames, &mut task_stack, &func, args, span)?;
+                    runtime.set_ready(tid, TaskContext::User { frames, operand_stack: task_stack });
+                    operand_stack.push(Value::Task(tid));
+                }
             }
             Instr::AwaitTask { span } => {
-                let v = operand_stack
-                    .pop()
-                    .ok_or_else(|| VmError::new("stack underflow on await", Some(span)))?;
-                match v {
-                    Value::Task(TaskInner::Completed(payload)) => {
-                        operand_stack.push(*payload);
-                    }
-                    Value::Task(TaskInner::Deferred {
-                        func: callee,
-                        args,
-                    }) => {
-                        if builtins.get(&callee).is_some() {
-                            let mut cur = builtins
-                                .eval_builtin(&callee, args, span)
-                                .map_err(|e| VmError::new(e.message, e.span))?;
-                            loop {
-                                match cur {
-                                    Value::Task(TaskInner::Completed(p)) => {
-                                        operand_stack.push(*p);
-                                        break;
-                                    }
-                                    Value::Task(TaskInner::Deferred {
-                                        func: c2,
-                                        args: a2,
-                                    }) => {
-                                        if builtins.get(&c2).is_some() {
-                                            cur = builtins
-                                                .eval_builtin(&c2, a2, span)
-                                                .map_err(|e| VmError::new(e.message, e.span))?;
-                                            continue;
-                                        }
-                                        let func_index = bytecode
-                                            .function_map
-                                            .get(&c2)
-                                            .copied()
-                                            .ok_or_else(|| {
-                                                VmError::new(
-                                                    format!("unknown function `{c2}` in await"),
-                                                    Some(span),
-                                                )
-                                            })?;
-                                        let func = &bytecode.functions[func_index];
-                                        let mut locals = vec![None; func.local_count as usize];
-                                        if a2.len() != func.param_count {
-                                            return Err(VmError::new(
-                                                format!(
-                                                    "wrong arity in deferred await: expected {}, got {}",
-                                                    func.param_count,
-                                                    a2.len()
-                                                ),
-                                                Some(span),
-                                            ));
-                                        }
-                                        for (i, slot_opt) in func.param_slots.iter().enumerate() {
-                                            if let Some(slot) = slot_opt {
-                                                locals[*slot as usize] = Some(a2[i].clone());
-                                            }
-                                        }
-                                        let stack_base = operand_stack.len();
-                                        frames.push(Frame {
-                                            kind: FrameKind::User { func_index },
-                                            ip: 0,
-                                            locals,
-                                            stack_base,
-                                        });
-                                        break;
-                                    }
-                                    other => {
-                                        operand_stack.push(other);
-                                        break;
-                                    }
-                                }
-                            }
-                        } else {
-                            let func_index = bytecode
-                                .function_map
-                                .get(&callee)
-                                .copied()
-                                .ok_or_else(|| {
-                                    VmError::new(
-                                        format!("unknown function `{callee}` in await"),
-                                        Some(span),
-                                    )
-                                })?;
-                            let func = &bytecode.functions[func_index];
-                            let mut locals = vec![None; func.local_count as usize];
-                            if args.len() != func.param_count {
-                                return Err(VmError::new(
-                                    format!(
-                                        "wrong arity in deferred await: expected {}, got {}",
-                                        func.param_count,
-                                        args.len()
-                                    ),
-                                    Some(span),
-                                ));
-                            }
-                            for (i, slot_opt) in func.param_slots.iter().enumerate() {
-                                if let Some(slot) = slot_opt {
-                                    locals[*slot as usize] = Some(args[i].clone());
-                                }
-                            }
-                            let stack_base = operand_stack.len();
-                            frames.push(Frame {
-                                kind: FrameKind::User { func_index },
-                                ip: 0,
-                                locals,
-                                stack_base,
-                            });
-                        }
-                    }
+                // Cooperative `await`: if the awaited task isn't complete yet,
+                // register this task as a waiter and yield back to the scheduler.
+                let awaited = match operand_stack.last() {
+                    Some(Value::Task(id)) => *id,
                     _ => {
-                        return Err(VmError::new(
-                            "`await` expects a `Task` value",
-                            Some(span),
-                        ));
+                        return Err(VmError::new("`await` expects a `Task` value", Some(span)));
                     }
+                };
+
+                if let Some(payload) = runtime.completed_value(awaited).cloned() {
+                    // Completion: pop task handle and push payload.
+                    let _ = operand_stack.pop();
+                    operand_stack.push(payload);
+                } else if runtime.is_completed(awaited) {
+                    // Completed but no payload stored: internal inconsistency.
+                    return Err(VmError::new(
+                        "internal error: completed task missing payload",
+                        Some(span),
+                    ));
+                } else {
+                    // Not done yet. Rewind ip so `await` runs again after resume.
+                    frame.ip = frame.ip.saturating_sub(1);
+                    return Ok(TaskOutcome::YieldAwaited { awaited });
                 }
             }
 
@@ -860,14 +1028,13 @@ pub fn run_program_with_builtins(
                 operand_stack.truncate(base);
 
                 if frames.is_empty() {
-                    break;
+                    return Ok(TaskOutcome::Completed(ret));
                 }
                 operand_stack.push(ret);
             }
         }
+        return Ok(TaskOutcome::Continue);
     }
-
-    Ok(())
 }
 
 fn as_bool(v: Value, span: Option<Span>) -> Result<bool, VmError> {

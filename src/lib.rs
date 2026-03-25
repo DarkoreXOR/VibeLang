@@ -1,6 +1,7 @@
 //! Vibelang compiler front end (lexer, parser, AST visitors, VM runtime).
 
 pub mod ast;
+pub mod async_runtime;
 pub mod bytecode;
 pub mod bytecode_gen;
 pub mod builtins;

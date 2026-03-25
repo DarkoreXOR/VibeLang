@@ -4,30 +4,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use num_bigint::BigInt;
 
+use crate::async_runtime::TaskId;
+
 #[derive(Debug)]
 pub struct StructInstance {
     pub name: String,
     pub is_unit: bool,
     pub fields: HashMap<String, Value>,
-}
-
-/// Async task: deferred user work or a completed payload.
-#[derive(Debug, Clone)]
-pub enum TaskInner {
-    /// Work not started; run `func` with `args` when awaited.
-    Deferred { func: String, args: Vec<Value> },
-    /// Finished task value (payload).
-    Completed(Box<Value>),
-}
-
-impl TaskInner {
-    pub fn completed(v: Value) -> Self {
-        TaskInner::Completed(Box::new(v))
-    }
-
-    pub fn deferred(func: String, args: Vec<Value>) -> Self {
-        TaskInner::Deferred { func, args }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +33,10 @@ pub enum Value {
         callee: String,
         captures: Vec<Value>,
     },
-    /// Async task (`Task<...>`).
-    Task(TaskInner),
+    /// Async task handle (`Task<...>`).
+    ///
+    /// Actual execution state is stored in the VM's async runtime scheduler.
+    Task(TaskId),
 }
 
 impl PartialEq for Value {
@@ -86,7 +71,7 @@ impl PartialEq for Value {
                     captures: b_caps,
                 },
             ) => a_callee == b_callee && a_caps == b_caps,
-            (Value::Task(_), Value::Task(_)) => false,
+            (Value::Task(a), Value::Task(b)) => a == b,
             _ => false,
         }
     }
@@ -129,13 +114,7 @@ impl Value {
                 callee: callee.clone(),
                 captures: captures.iter().map(|v| v.deep_clone()).collect(),
             },
-            Value::Task(t) => Value::Task(match t {
-                TaskInner::Deferred { func, args } => TaskInner::Deferred {
-                    func: func.clone(),
-                    args: args.iter().map(|v| v.deep_clone()).collect(),
-                },
-                TaskInner::Completed(v) => TaskInner::Completed(Box::new(v.deep_clone())),
-            }),
+            Value::Task(id) => Value::Task(*id),
         }
     }
 }

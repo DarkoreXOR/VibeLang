@@ -30,7 +30,8 @@ impl ModuleLoadError {
 
 #[derive(Clone)]
 struct ImportDecl {
-    names: Vec<String>,
+    /// Pairs of (exported name in dependency, local name in this module).
+    bindings: Vec<(String, String)>,
     module_path: String,
 }
 
@@ -39,6 +40,8 @@ struct ModuleData {
     items: Vec<AstNode>,
     imports: Vec<ImportDecl>,
     exports: HashSet<String>,
+    /// Public export name -> symbol name on the underlying declaration (`sleep` -> `sleep_async`).
+    export_sources: HashMap<String, String>,
 }
 
 pub fn load_linked_program(entry_file: &str) -> Result<AstNode, ModuleLoadError> {
@@ -61,7 +64,8 @@ pub fn load_linked_program(entry_file: &str) -> Result<AstNode, ModuleLoadError>
     // - entry module keeps all of its declarations
     // - dependency modules expose only names explicitly imported from them
     // - non-exported declarations are still included (module internals)
-    let required_exports = collect_required_exports(&workspace, &entry_path, &loaded)?;
+    let (required_exports, import_local_names) =
+        collect_required_exports(&workspace, &entry_path, &loaded)?;
 
     let mut merged = Vec::new();
     for path in order {
@@ -69,9 +73,14 @@ pub fn load_linked_program(entry_file: &str) -> Result<AstNode, ModuleLoadError>
             continue;
         };
         let required_for_module = required_exports.get(&path);
-        for item in &module.items {
-            if matches!(item, AstNode::Import { .. }) {
-                continue;
+        let locals_for_module = import_local_names.get(&path);
+
+        'items: for item in &module.items {
+            if matches!(
+                item,
+                AstNode::Import { .. } | AstNode::ExportAlias { .. }
+            ) {
+                continue 'items;
             }
             if path != entry_path {
                 if let Some((name, is_exported)) = item_named_export(item) {
@@ -79,7 +88,33 @@ pub fn load_linked_program(entry_file: &str) -> Result<AstNode, ModuleLoadError>
                         let is_required = required_for_module
                             .is_some_and(|needed| needed.contains(name));
                         if !is_required {
-                            continue;
+                            continue 'items;
+                        }
+                    }
+                }
+
+                if let (Some(req), Some(locals), Some(dn)) = (
+                    required_for_module,
+                    locals_for_module,
+                    declaration_base_name(item),
+                ) {
+                    for (public, src) in &module.export_sources {
+                        if src == dn && req.contains(public) {
+                            let local = locals
+                                .get(public)
+                                .cloned()
+                                .unwrap_or_else(|| public.clone());
+                            let stripped = strip_export(item);
+                            let is_extension = extension_method(item);
+                            let merged_item = if is_extension && local != dn {
+                                stripped
+                            } else if !is_extension && local != dn {
+                                rename_declaration(stripped, &local)
+                            } else {
+                                stripped
+                            };
+                            merged.push(merged_item);
+                            continue 'items;
                         }
                     }
                 }
@@ -109,16 +144,128 @@ fn item_named_export(item: &AstNode) -> Option<(&str, bool)> {
     }
 }
 
+fn declaration_base_name(item: &AstNode) -> Option<&str> {
+    match item {
+        AstNode::InternalFunction { name, .. }
+        | AstNode::Function { name, .. }
+        | AstNode::StructDef { name, .. }
+        | AstNode::EnumDef { name, .. } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+fn extension_method(item: &AstNode) -> bool {
+    matches!(item, AstNode::Function {
+        extension_receiver: Some(_),
+        ..
+    })
+}
+
+fn rename_declaration(item: AstNode, new_name: &str) -> AstNode {
+    match item {
+        AstNode::InternalFunction {
+            type_params,
+            params,
+            return_type,
+            name_span,
+            is_async,
+            ..
+        } => AstNode::InternalFunction {
+            name: new_name.to_string(),
+            type_params,
+            params,
+            return_type,
+            name_span,
+            is_exported: false,
+            is_async,
+        },
+        AstNode::Function {
+            extension_receiver,
+            type_params,
+            params,
+            return_type,
+            body,
+            name_span,
+            closing_span,
+            is_async,
+            ..
+        } => AstNode::Function {
+            name: new_name.to_string(),
+            extension_receiver,
+            type_params,
+            params,
+            return_type,
+            body,
+            name_span,
+            closing_span,
+            is_exported: false,
+            is_async,
+        },
+        AstNode::StructDef {
+            type_params,
+            fields,
+            is_unit,
+            is_internal,
+            name_span,
+            span,
+            ..
+        } => AstNode::StructDef {
+            name: new_name.to_string(),
+            type_params,
+            fields,
+            is_unit,
+            is_internal,
+            name_span,
+            span,
+            is_exported: false,
+        },
+        AstNode::EnumDef {
+            type_params,
+            variants,
+            name_span,
+            span,
+            ..
+        } => AstNode::EnumDef {
+            name: new_name.to_string(),
+            type_params,
+            variants,
+            name_span,
+            span,
+            is_exported: false,
+        },
+        other => other,
+    }
+}
+
+/// True if `ex` is an exported extension symbol whose receiver is `base` or `base<...>` (e.g.
+/// `Task::wait_all` or `Task<T>::wait_all` when importing `Task`).
+fn extension_export_matches_import(ex: &str, imported_base: &str) -> bool {
+    let Some((recv, _method)) = ex.split_once("::") else {
+        return false;
+    };
+    if recv == imported_base {
+        return true;
+    }
+    recv.starts_with(&format!("{imported_base}<")) && recv.ends_with('>')
+}
+
 fn collect_required_exports(
     workspace: &Path,
     entry_path: &Path,
     loaded: &HashMap<PathBuf, ModuleData>,
-) -> Result<HashMap<PathBuf, HashSet<String>>, ModuleLoadError> {
+) -> Result<
+    (
+        HashMap<PathBuf, HashSet<String>>,
+        HashMap<PathBuf, HashMap<String, String>>,
+    ),
+    ModuleLoadError,
+> {
     fn visit(
         module_path: &Path,
         workspace: &Path,
         loaded: &HashMap<PathBuf, ModuleData>,
         required: &mut HashMap<PathBuf, HashSet<String>>,
+        import_locals: &mut HashMap<PathBuf, HashMap<String, String>>,
         seen: &mut HashSet<PathBuf>,
     ) -> Result<(), ModuleLoadError> {
         if !seen.insert(module_path.to_path_buf()) {
@@ -139,18 +286,47 @@ fn collect_required_exports(
                     )
                 })?;
             let needed = required.entry(dep_path.clone()).or_default();
-            for n in &imp.names {
-                needed.insert(n.clone());
+            let locals_map = import_locals.entry(dep_path.clone()).or_default();
+            let Some(dep_module) = loaded.get(&dep_path) else {
+                return Err(ModuleLoadError::with_path(
+                    &dep_path,
+                    "dependency not loaded",
+                ));
+            };
+            for (export_name, local_name) in &imp.bindings {
+                needed.insert(export_name.clone());
+                locals_map.insert(export_name.clone(), local_name.clone());
+                // Importing `Foo` also pulls exported extension methods `Foo::bar` / `Foo<T>::bar`.
+                for ex in &dep_module.exports {
+                    if extension_export_matches_import(ex, export_name) {
+                        needed.insert(ex.clone());
+                    }
+                }
             }
-            visit(&dep_path, workspace, loaded, required, seen)?;
+            visit(
+                &dep_path,
+                workspace,
+                loaded,
+                required,
+                import_locals,
+                seen,
+            )?;
         }
         Ok(())
     }
 
     let mut required: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let mut import_locals: HashMap<PathBuf, HashMap<String, String>> = HashMap::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
-    visit(entry_path, workspace, loaded, &mut required, &mut seen)?;
-    Ok(required)
+    visit(
+        entry_path,
+        workspace,
+        loaded,
+        &mut required,
+        &mut import_locals,
+        &mut seen,
+    )?;
+    Ok((required, import_locals))
 }
 
 fn load_module_recursive(
@@ -183,11 +359,11 @@ fn load_module_recursive(
         let dep = loaded
             .get(&dep_path)
             .ok_or_else(|| ModuleLoadError::with_path(&dep_path, "dependency not loaded"))?;
-        for name in &imp.names {
-            if !dep.exports.contains(name) {
+        for (export_name, _) in &imp.bindings {
+            if !dep.exports.contains(export_name) {
                 return Err(ModuleLoadError::with_path(
                     module_path,
-                    format!("module `{}` does not export `{name}`", imp.module_path),
+                    format!("module `{}` does not export `{export_name}`", imp.module_path),
                 ));
             }
         }
@@ -216,14 +392,21 @@ fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
 
     let mut imports = Vec::new();
     let mut exports = HashSet::new();
+    let mut export_sources = HashMap::new();
     for item in &items {
         match item {
             AstNode::Import {
-                names, module_path, ..
+                bindings,
+                module_path,
+                ..
             } => imports.push(ImportDecl {
-                names: names.iter().map(|(n, _)| n.clone()).collect(),
+                bindings: bindings.clone(),
                 module_path: module_path.clone(),
             }),
+            AstNode::ExportAlias { from, to, .. } => {
+                exports.insert(to.clone());
+                export_sources.insert(to.clone(), from.clone());
+            }
             AstNode::InternalFunction {
                 name, is_exported, ..
             }
@@ -238,6 +421,7 @@ fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
             } => {
                 if *is_exported {
                     exports.insert(name.clone());
+                    export_sources.insert(name.clone(), name.clone());
                 }
             }
             _ => {}
@@ -248,6 +432,7 @@ fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
         items,
         imports,
         exports,
+        export_sources,
     })
 }
 

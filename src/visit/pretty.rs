@@ -107,16 +107,26 @@ impl PrettyPrinter {
 impl Visit for PrettyPrinter {
     fn visit_ast_node(&mut self, node: &AstNode) {
         match node {
-            AstNode::Import { names, module_path, .. } => {
-                self.line(&format!(
-                    "Import {{ names: {}, from: {:?} }}",
-                    names
-                        .iter()
-                        .map(|(n, _)| n.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    module_path
-                ));
+            AstNode::Import {
+                bindings,
+                module_path,
+                ..
+            } => {
+                let s = bindings
+                    .iter()
+                    .map(|(e, l)| {
+                        if e == l {
+                            e.clone()
+                        } else {
+                            format!("{e} as {l}")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.line(&format!("Import {{ {s}, from: {:?} }}", module_path));
+            }
+            AstNode::ExportAlias { from, to, .. } => {
+                self.line(&format!("ExportAlias {{ {from} as {to} }}"));
             }
             AstNode::Program(items) => {
                 self.line("Program");

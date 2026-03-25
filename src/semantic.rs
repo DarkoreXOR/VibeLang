@@ -50,6 +50,9 @@ struct FuncSig {
     /// Distinguishes `async func` / `internal async func` for callers (see bytecode generator).
     #[allow(dead_code)]
     is_async: bool,
+    /// For extension methods, the receiver type template (`Task<T>`) used to infer type args from
+    /// `Type::method` calls. `None` for ordinary functions (first parameter is used instead).
+    extension_receiver_ty: Option<Ty>,
 }
 
 #[derive(Debug)]
@@ -742,6 +745,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                         params_ast: params.clone(),
                         ret,
                         is_async: *is_async,
+                        extension_receiver_ty: None,
                     },
                 );
             }
@@ -765,12 +769,6 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                     continue;
                 }
                 defined_names.insert(name.clone(), *name_span);
-                if *is_async && extension_receiver.is_some() {
-                    errors.push(SemanticError::new(
-                        "`async` extension methods are not supported".to_string(),
-                        *name_span,
-                    ));
-                }
                 let param_tys = check_param_list(
                     params,
                     type_params,
@@ -858,6 +856,17 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                                 if !entry.contains(&name) {
                                     entry.insert(0, name.clone());
                                 }
+                                // Also register generic `EnumApp` receivers that are structs (e.g. `Task<T>::wait_all`).
+                                if let TypeExpr::EnumApp { name: recv_name, .. } = &ext.ty {
+                                    if structs.contains_key(recv_name) {
+                                        let entry = generic_struct_ext
+                                            .entry(ext.method_name.clone())
+                                            .or_default();
+                                        if !entry.contains(&name) {
+                                            entry.push(name.clone());
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if let TypeExpr::Named(n) = &ext.ty {
@@ -914,6 +923,17 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                         ));
                     }
                 }
+                let extension_receiver_ty = extension_receiver.as_ref().and_then(|ext| {
+                    ty_from_type_expr(
+                        &ext.ty,
+                        *name_span,
+                        &mut errors,
+                        type_params,
+                        &structs,
+                        &enums,
+                        &aliases,
+                    )
+                });
                 registry.insert(
                     name.clone(),
                     FuncSig {
@@ -922,13 +942,14 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                         params_ast: params.clone(),
                         ret,
                         is_async: *is_async,
+                        extension_receiver_ty,
                     },
                 );
             }
             AstNode::StructDef { .. } => {}
             AstNode::EnumDef { .. } => {}
             AstNode::TypeAlias { .. } => {}
-            AstNode::Import { .. } => {}
+            AstNode::Import { .. } | AstNode::ExportAlias { .. } => {}
             AstNode::Let {
                 pattern,
                 type_annotation,
@@ -3790,7 +3811,12 @@ fn check_call(
             };
             for v in &packed_params {
                 if let Some(got) = check_expr(v, ctx, errors) {
-                    if *elem.as_ref() != Ty::Any && got != *elem.as_ref() {
+                    // Monomorphic `params`: check element types immediately.
+                    // Generic callee: infer `T` from arguments in the generic-inference pass below.
+                    if sig.type_params.is_empty()
+                        && *elem.as_ref() != Ty::Any
+                        && got != *elem.as_ref()
+                    {
                         errors.push(SemanticError::new(
                             format!(
                                 "packed argument for `params` in `{callee}` has type `{}`, expected `{}`",
@@ -3887,6 +3913,29 @@ fn check_call(
     } else {
         // Infer from value parameters (and nested structure) only.
         for (i, expected_template) in sig.params.iter().enumerate() {
+            if Some(i) == params_index && !params_explicit_by_name && !packed_params.is_empty() {
+                let Ty::Array(elem_tmpl) = expected_template else {
+                    errors.push(SemanticError::new(
+                        "`params` parameter must have array type `[T]`",
+                        span,
+                    ));
+                    return None;
+                };
+                for v in &packed_params {
+                    if let Some(got) = check_expr(v, ctx, errors) {
+                        if !infer::infer_generic_from_template(
+                            elem_tmpl.as_ref(),
+                            &got,
+                            &mut substs,
+                            errors,
+                            span,
+                        ) {
+                            return None;
+                        }
+                    }
+                }
+                continue;
+            }
             let got = &arg_tys[i];
             if !infer::infer_generic_from_template(
                 expected_template,
@@ -3931,6 +3980,38 @@ fn check_call(
 
     // Validate argument types after instantiation.
     for (i, got) in arg_tys.iter().enumerate() {
+        if Some(i) == params_index && !params_explicit_by_name && !packed_params.is_empty() {
+            let expected_template = &sig.params[i];
+            let Ty::Array(elem_tmpl) = expected_template else {
+                continue;
+            };
+            let expected_elem = infer::instantiate_ty(elem_tmpl.as_ref(), &substs);
+            for v in &packed_params {
+                if let Some(got_v) = check_expr(v, ctx, errors) {
+                    if matches!(got_v, Ty::InferVar(_)) || matches!(expected_elem, Ty::InferVar(_)) {
+                        let _ = infer::unify_types(
+                            &got_v,
+                            &expected_elem,
+                            &mut ctx.infer_ctx,
+                            errors,
+                            expr_span(v),
+                        );
+                        continue;
+                    }
+                    if !arg_type_compatible(&got_v, &expected_elem) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "packed argument for `params` in `{callee}` has type `{}`, expected `{}`",
+                                ty_name(&got_v),
+                                ty_name(&expected_elem)
+                            ),
+                            expr_span(v),
+                        ));
+                    }
+                }
+            }
+            continue;
+        }
         let expected_template = &sig.params[i];
         let expected_inst = infer::instantiate_ty(expected_template, &substs);
         if matches!(got, Ty::InferVar(_)) || matches!(expected_inst, Ty::InferVar(_)) {
@@ -5368,8 +5449,12 @@ fn check_expr(
                                     let mut substs = HashMap::new();
                                     let mut probe_errors = Vec::new();
                                     if let Some(s) = ctx.registry.get(g) {
+                                        let tmpl = s
+                                            .extension_receiver_ty
+                                            .as_ref()
+                                            .unwrap_or(&s.params[0]);
                                         if infer::infer_generic_from_template(
-                                            &s.params[0],
+                                            tmpl,
                                             &recv_ty,
                                             &mut substs,
                                             &mut probe_errors,
@@ -5401,8 +5486,12 @@ fn check_expr(
                                     let mut substs = HashMap::new();
                                     let mut probe_errors = Vec::new();
                                     if let Some(s) = ctx.registry.get(g) {
+                                        let tmpl = s
+                                            .extension_receiver_ty
+                                            .as_ref()
+                                            .unwrap_or(&s.params[0]);
                                         if infer::infer_generic_from_template(
-                                            &s.params[0],
+                                            tmpl,
                                             &recv_ty,
                                             &mut substs,
                                             &mut probe_errors,
@@ -5418,16 +5507,29 @@ fn check_expr(
                             }
                         }
                     }
-                    if let TypeExpr::Named(n) = te {
-                        if ctx.structs.contains_key(&n) {
-                            let recv_ty = Ty::Struct(n);
+                    if let TypeExpr::Named(ref n) = te {
+                        if ctx.structs.contains_key(n) {
+                            let recv_ty = ty_from_type_expr(
+                                &te,
+                                *span,
+                                errors,
+                                &[],
+                                &ctx.structs,
+                                &ctx.enums,
+                                ctx.aliases,
+                            )
+                            .unwrap_or_else(|| Ty::Struct(n.clone()));
                             if let Some(candidates) = ctx.generic_struct_ext.get(method) {
                                 for g in candidates {
                                     let mut substs = HashMap::new();
                                     let mut probe_errors = Vec::new();
                                     if let Some(s) = ctx.registry.get(g) {
+                                        let tmpl = s
+                                            .extension_receiver_ty
+                                            .as_ref()
+                                            .unwrap_or(&s.params[0]);
                                         if infer::infer_generic_from_template(
-                                            &s.params[0],
+                                            tmpl,
                                             &recv_ty,
                                             &mut substs,
                                             &mut probe_errors,
@@ -5576,7 +5678,8 @@ fn expr_span(expr: &AstNode) -> Span {
         | AstNode::StructLiteral { span, .. }
         | AstNode::FieldAccess { span, .. }
         | AstNode::EnumVariantCtor { span, .. }
-        | AstNode::BoolLiteral { span, .. } => *span,
+        | AstNode::BoolLiteral { span, .. }
+        | AstNode::Await { span, .. } => *span,
         _ => Span::new(1, 1, 1),
     }
 }

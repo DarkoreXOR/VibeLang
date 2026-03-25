@@ -99,6 +99,21 @@ pub fn match_type_keys(template: &TyKey, inferred: &TyKey, type_params: &[String
                     .zip(a2.iter())
                     .all(|(t, i)| match_type_keys(t, i, type_params))
         }
+        // `Task::method` at the call site parses as `Task` (Ident); the extension receiver is
+        // `Task<T>` with `T` from the callee's type parameters — treat as matching when the base
+        // name agrees and every type argument in the template is a wildcard type param.
+        (
+            TyKey::EnumApp {
+                name: n1,
+                args: a1,
+            },
+            TyKey::Ident(b),
+        ) if n1 == b
+            && !a1.is_empty()
+            && a1.iter().all(|t| matches!(t, TyKey::Ident(tp) if type_params.contains(tp))) =>
+        {
+            true
+        }
         _ => false,
     }
 }

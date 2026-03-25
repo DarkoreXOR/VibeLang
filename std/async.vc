@@ -1,0 +1,32 @@
+import { int_array_len } from "std/core";
+
+export internal struct Task<T = ()>;
+
+// internals
+
+internal async func wait_all_tasks_async<T>(tasks: [Task<T>]): Task;
+
+// This is the VibeLang implementation that actually drives user tasks via `await`.
+// The Rust builtin `wait_all_tasks_async` delegates to this helper so it can
+// support user-defined `async func`s.
+async func wait_all_tasks_async_impl<T>(tasks: [Task<T>]): Task {
+    let idx = 0;
+    let length = int_array_len(tasks);
+
+    while idx < length {
+        await tasks[idx];
+        idx = idx + 1;
+    }
+
+    return ();
+}
+
+internal async func sleep_async(milliseconds: Int): Task;
+
+// exports
+
+export async func Task<type T>::wait_all<T>(params tasks: [Task<T>]): Task {
+    return await wait_all_tasks_async(tasks);
+}
+
+export sleep_async as sleep;

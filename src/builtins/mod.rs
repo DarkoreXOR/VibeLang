@@ -23,6 +23,7 @@ mod rand_int;
 mod rand_bigint;
 mod stoi;
 mod sleep;
+mod wait_all_tasks;
 
 use concat::ConcatBuiltin;
 use input::InputBuiltin;
@@ -37,6 +38,7 @@ use rand_int::RandIntBuiltin;
 use rand_bigint::RandBigIntBuiltin;
 use stoi::StoiBuiltin;
 use sleep::SleepBuiltin;
+use wait_all_tasks::WaitAllTasksBuiltin;
 
 #[derive(Debug)]
 pub struct BuiltinError {
@@ -70,6 +72,15 @@ pub struct BuiltinRegistry {
     builtins: HashMap<&'static str, Box<dyn BuiltinImpl>>,
 }
 
+// Async task driving is handled by the VM's async runtime scheduler.
+
+fn canonical_builtin_name<'a>(name: &'a str) -> &'a str {
+    match name {
+        "sleep_async" => "sleep",
+        x => x,
+    }
+}
+
 impl BuiltinRegistry {
     pub fn new() -> Self {
         Self {
@@ -83,7 +94,30 @@ impl BuiltinRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn BuiltinImpl> {
-        self.builtins.get(name).map(|b| b.as_ref())
+        let key = canonical_builtin_name(name);
+        self.builtins.get(key).map(|b| b.as_ref())
+    }
+
+    pub fn resolve_internal_async_callee(
+        &self,
+        params: &[Param],
+        return_type: &Option<TypeExpr>,
+        name_span: Span,
+    ) -> Result<&'static str, BuiltinError> {
+        if let Some(b) = self.builtins.get("sleep") {
+            if b.validate_decl(params, return_type, name_span).is_ok() {
+                return Ok("sleep");
+            }
+        }
+        if let Some(b) = self.builtins.get("wait_all_tasks_async") {
+            if b.validate_decl(params, return_type, name_span).is_ok() {
+                return Ok("wait_all_tasks_async");
+            }
+        }
+        Err(BuiltinError::new(
+            "internal `async func` must match built-in `sleep` or `wait_all_tasks_async` signatures",
+            Some(name_span),
+        ))
     }
 
     pub fn validate_internal_func_decl(
@@ -94,11 +128,9 @@ impl BuiltinRegistry {
         name_span: Span,
         is_async: bool,
     ) -> Result<(), BuiltinError> {
-        if is_async && name != "sleep" {
-            return Err(BuiltinError::new(
-                format!("internal `async func` is only supported for `sleep` (found `{name}`)"),
-                Some(name_span),
-            ));
+        if is_async {
+            self.resolve_internal_async_callee(params, return_type, name_span)?;
+            return Ok(());
         }
         if name == "sleep" && !is_async {
             return Err(BuiltinError::new(
@@ -106,7 +138,8 @@ impl BuiltinRegistry {
                 Some(name_span),
             ));
         }
-        let Some(b) = self.get(name) else {
+        let key = canonical_builtin_name(name);
+        let Some(b) = self.builtins.get(key) else {
             return Err(BuiltinError::new(
                 format!("unsupported internal function `{name}` (no builtin registered)"),
                 Some(name_span),
@@ -121,7 +154,8 @@ impl BuiltinRegistry {
         args: Vec<Value>,
         span: Span,
     ) -> Result<Value, BuiltinError> {
-        let Some(b) = self.get(name) else {
+        let key = canonical_builtin_name(name);
+        let Some(b) = self.builtins.get(key) else {
             return Err(BuiltinError::new(
                 format!("unsupported builtin `{name}`"),
                 Some(span),
@@ -153,6 +187,7 @@ fn default_registry_impl() -> BuiltinRegistry {
     reg.register(RandIntBuiltin);
     reg.register(RandBigIntBuiltin);
     reg.register(SleepBuiltin);
+    reg.register(WaitAllTasksBuiltin);
     reg
 }
 

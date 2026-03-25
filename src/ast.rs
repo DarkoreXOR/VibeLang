@@ -206,10 +206,16 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstNode {
-    /// `import { A, B } from "path";`
+    /// `import { A, B as C } from "path";` — each pair is (exported name from module, local name).
     Import {
-        names: Vec<(String, Span)>,
+        bindings: Vec<(String, String)>,
         module_path: String,
+        span: Span,
+    },
+    /// `export from_name as to_name;` — re-export `from_name` under public name `to_name`.
+    ExportAlias {
+        from: String,
+        to: String,
         span: Span,
     },
     SingleLineComment(String),

@@ -141,6 +141,8 @@ struct FnGen<'a> {
     extension_match_info: &'a HashMap<String, (TyKey, Vec<String>)>,
     /// User/internal functions that return `Task` without eager execution at call sites.
     async_callees: &'a HashSet<String>,
+    /// AST name for internal async builtins -> VM deferred callee symbol (`asyncSleep` -> `sleep`).
+    internal_async_vm_callee: &'a HashMap<String, String>,
     scopes: Vec<HashMap<String, u32>>,
     local_type_keys: Vec<HashMap<String, TyKey>>,
     next_local_slot: u32,
@@ -167,6 +169,7 @@ impl<'a> FnGen<'a> {
         generic_struct_ext: &'a HashMap<String, Vec<String>>,
         extension_match_info: &'a HashMap<String, (TyKey, Vec<String>)>,
         async_callees: &'a HashSet<String>,
+        internal_async_vm_callee: &'a HashMap<String, String>,
     ) -> Self {
         Self {
             globals,
@@ -180,6 +183,7 @@ impl<'a> FnGen<'a> {
             generic_struct_ext,
             extension_match_info,
             async_callees,
+            internal_async_vm_callee,
             scopes: Vec::new(),
             local_type_keys: Vec::new(),
             next_local_slot: 0,
@@ -194,8 +198,13 @@ impl<'a> FnGen<'a> {
 
     fn emit_function_invoke(&mut self, callee: &str, argc: usize, span: Span) {
         if self.async_callees.contains(callee) {
+            let vm_target = self
+                .internal_async_vm_callee
+                .get(callee)
+                .map(|s| s.as_str())
+                .unwrap_or(callee);
             self.emit(Instr::MakeDeferredTask {
-                func: callee.to_string(),
+                func: vm_target.to_string(),
                 argc,
                 span,
             });
@@ -1333,6 +1342,7 @@ impl<'a> FnGen<'a> {
                     self.generic_struct_ext,
                     self.extension_match_info,
                     self.async_callees,
+                    self.internal_async_vm_callee,
                 );
                 child.current_fn_name = lambda_name.clone();
                 child.push_scope();
@@ -2177,6 +2187,8 @@ pub fn compile_program_with_builtins(
     let mut generic_struct_ext: HashMap<String, Vec<String>> = HashMap::new();
     let mut extension_match_info: HashMap<String, (TyKey, Vec<String>)> = HashMap::new();
     let mut async_callees: HashSet<String> = HashSet::new();
+    let mut internal_async_vm_callee: HashMap<String, String> = HashMap::new();
+    let mut struct_names: HashSet<String> = HashSet::new();
 
     // Validate internal built-ins and collect globals layout.
     for item in items {
@@ -2190,16 +2202,21 @@ pub fn compile_program_with_builtins(
                 is_async,
                 ..
             } => {
-                validate_internal_func_decl(
-                    builtins,
-                    name,
-                    params,
-                    return_type,
-                    *name_span,
-                    *is_async,
-                )?;
                 if *is_async {
+                    let canon = builtins
+                        .resolve_internal_async_callee(params, return_type, *name_span)
+                        .map_err(|e| CompileError::new(e.message, e.span))?;
+                    internal_async_vm_callee.insert(name.clone(), canon.to_string());
                     async_callees.insert(name.clone());
+                } else {
+                    validate_internal_func_decl(
+                        builtins,
+                        name,
+                        params,
+                        return_type,
+                        *name_span,
+                        false,
+                    )?;
                 }
                 call_specs.insert(
                     name.clone(),
@@ -2236,13 +2253,11 @@ pub fn compile_program_with_builtins(
                             _ => false,
                         };
                         if is_generic {
-                            if let Some(first_param) = params.first() {
-                                if let Some(tk) = type_expr_to_ty_key(&first_param.ty) {
-                                    extension_match_info.insert(
-                                        name.clone(),
-                                        (tk, GenericParam::names(type_params)),
-                                    );
-                                }
+                            if let Some(tk) = type_expr_to_ty_key(&ext.ty) {
+                                extension_match_info.insert(
+                                    name.clone(),
+                                    (tk, GenericParam::names(type_params)),
+                                );
                             }
                             let entry = generic_array_ext
                                 .entry(ext.method_name.clone())
@@ -2258,28 +2273,34 @@ pub fn compile_program_with_builtins(
                     } else if let TypeExpr::EnumApp { args, .. } = &ext.ty {
                         let is_generic = args.iter().all(|a| matches!(a, TypeExpr::TypeParam(_)));
                         if is_generic {
-                            if let Some(first_param) = params.first() {
-                                if let Some(tk) = type_expr_to_ty_key(&first_param.ty) {
-                                    extension_match_info.insert(
-                                        name.clone(),
-                                        (tk, GenericParam::names(type_params)),
-                                    );
-                                }
+                            if let Some(tk) = type_expr_to_ty_key(&ext.ty) {
+                                extension_match_info.insert(
+                                    name.clone(),
+                                    (tk, GenericParam::names(type_params)),
+                                );
                             }
                             let entry = generic_enum_ext.entry(ext.method_name.clone()).or_default();
                             if !entry.contains(name) {
                                 entry.insert(0, name.clone());
                             }
+                            if let TypeExpr::EnumApp { name: recv_name, .. } = &ext.ty {
+                                if struct_names.contains(recv_name) {
+                                    let entry = generic_struct_ext
+                                        .entry(ext.method_name.clone())
+                                        .or_default();
+                                    if !entry.contains(name) {
+                                        entry.push(name.clone());
+                                    }
+                                }
+                            }
                         }
                     } else if let TypeExpr::Named(n) = &ext.ty {
                         if type_params.iter().any(|tp| tp.name == *n) {
-                            if let Some(first_param) = params.first() {
-                                if let Some(tk) = type_expr_to_ty_key(&first_param.ty) {
-                                    extension_match_info.insert(
-                                        name.clone(),
-                                        (tk, GenericParam::names(type_params)),
-                                    );
-                                }
+                            if let Some(tk) = type_expr_to_ty_key(&ext.ty) {
+                                extension_match_info.insert(
+                                    name.clone(),
+                                    (tk, GenericParam::names(type_params)),
+                                );
                             }
                             let entry = generic_struct_ext
                                 .entry(ext.method_name.clone())
@@ -2304,6 +2325,7 @@ pub fn compile_program_with_builtins(
                 call_returns.insert(name.clone(), return_type.clone());
             }
             AstNode::StructDef { name, is_unit, .. } => {
+                struct_names.insert(name.clone());
                 if *is_unit {
                     unit_struct_names.insert(name.clone());
                 }
@@ -2375,6 +2397,7 @@ pub fn compile_program_with_builtins(
         &generic_struct_ext,
         &extension_match_info,
         &async_callees,
+        &internal_async_vm_callee,
     );
     init_gen.current_fn_name = "__init__".to_string();
     // Empty scope stack is fine: globals are resolved via `globals` map.
@@ -2462,6 +2485,7 @@ pub fn compile_program_with_builtins(
                 &generic_struct_ext,
                 &extension_match_info,
                 &async_callees,
+                &internal_async_vm_callee,
             );
             fn_gen.current_fn_name = name.clone();
             fn_gen.push_scope();

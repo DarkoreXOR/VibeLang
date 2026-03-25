@@ -1,12 +1,13 @@
-use std::thread;
-use std::time::Duration;
-
 use crate::ast::{Param, TypeExpr};
 use crate::builtins::{type_name_named, BuiltinError, BuiltinImpl};
 use crate::error::Span;
-use crate::value::{TaskInner, Value};
+use crate::value::Value;
 
-/// `internal async func sleep(milliseconds: Int): Task` — blocks the thread for `ms` ms, returns a completed `Task<()>`.
+/// `internal async func sleep(milliseconds: Int): Task`
+///
+/// In the VM scheduler this async callee is treated as a non-blocking timer.
+/// This builtin's `eval` returns the payload value (`Unit`) and is not expected
+/// to perform any blocking work.
 pub struct SleepBuiltin;
 
 impl BuiltinImpl for SleepBuiltin {
@@ -65,7 +66,9 @@ impl BuiltinImpl for SleepBuiltin {
                 ))
             }
         };
-        thread::sleep(Duration::from_millis(ms.min(u64::from(u32::MAX))));
-        Ok(Value::Task(TaskInner::completed(Value::Unit)))
+        // The VM handles the actual timer/wake-up. Here we just return the
+        // payload for `Task<()>` so the async callee can complete.
+        let _ = ms;
+        Ok(Value::Unit)
     }
 }
