@@ -24,6 +24,13 @@ pub trait Visit {
 
     fn visit_integer_literal(&mut self, _value: u64, _original: &str, _radix: u32) {}
 
+    fn visit_float_literal(
+        &mut self,
+        _original: &str,
+        _cleaned: &str,
+    ) {
+    }
+
     fn visit_string_literal(&mut self, _value: &str, _original: &str) {}
 
     fn visit_identifier(&mut self, _name: &str) {}
@@ -91,6 +98,11 @@ pub fn walk_ast_node<V: Visit + ?Sized>(visitor: &mut V, node: &AstNode) {
             radix,
             ..
         } => visitor.visit_integer_literal(*value, original, *radix),
+        AstNode::FloatLiteral {
+            original,
+            cleaned,
+            ..
+        } => visitor.visit_float_literal(original, cleaned),
         AstNode::StringLiteral { value, original, .. } => {
             visitor.visit_string_literal(value, original);
         }

@@ -15,6 +15,7 @@ mod typecheck;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Ty {
     Int,
+    Float,
     String,
     Bool,
     Unit,
@@ -1477,6 +1478,7 @@ fn ty_from_type_expr(
         }
         TypeExpr::Named(n) => match n.as_str() {
             "Int" => Some(Ty::Int),
+            "Float" => Some(Ty::Float),
             "String" => Some(Ty::String),
             "Bool" => Some(Ty::Bool),
             "Any" => Some(Ty::Any),
@@ -1557,7 +1559,7 @@ fn ty_from_type_expr(
             _ => {
                 errors.push(SemanticError::new(
                         format!(
-                            "unknown type `{n}` (expected `Int`, `String`, `Bool`, `Any`, struct types, `()`, an array type, or a tuple type)"
+                            "unknown type `{n}` (expected `Int`, `Float`, `String`, `Bool`, `Any`, struct types, `()`, an array type, or a tuple type)"
                         ),
                     span,
                 ));
@@ -1768,6 +1770,7 @@ fn ty_from_type_expr(
 fn span_of_item(item: &AstNode) -> Span {
     match item {
         AstNode::IntegerLiteral { span, .. }
+        | AstNode::FloatLiteral { span, .. }
         | AstNode::StringLiteral { span, .. }
         | AstNode::Identifier { span, .. }
         | AstNode::BinaryOp { span, .. }
@@ -2590,7 +2593,7 @@ fn check_assign_expr(
 }
 
 fn check_compound_assign(
-    _op: CompoundOp,
+    op: CompoundOp,
     lhs: &AstNode,
     rhs: &AstNode,
     ctx: &mut BodyCtx<'_>,
@@ -2608,30 +2611,182 @@ fn check_compound_assign(
         AstNode::Identifier { name, span } => {
             let lt = check_expr(lhs, ctx, errors).map(|t| infer::resolve_ty(&t, &ctx.infer_ctx));
             let rt = check_expr(rhs, ctx, errors).map(|t| infer::resolve_ty(&t, &ctx.infer_ctx));
-            let int_ok = match (&lt, &rt) {
-                (Some(l), Some(r)) => {
-                    infer::unify_types(l, &Ty::Int, &mut ctx.infer_ctx, errors, *span)
-                        && infer::unify_types(r, &Ty::Int, &mut ctx.infer_ctx, errors, *span)
+            let arith_allows_float = matches!(op, CompoundOp::Add | CompoundOp::Sub | CompoundOp::Mul | CompoundOp::Div | CompoundOp::Mod);
+
+            // Avoid spurious type-mismatch errors by only attempting unification
+            // when operand types are compatible with the target.
+            match (&lt, &rt) {
+                (Some(Ty::Int), Some(Ty::Int)) => {
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Int,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
                 }
-                _ => false,
-            };
-            if !int_ok {
-                errors.push(SemanticError::new(
-                    "compound assignment requires `Int` operands",
-                    *span,
-                ));
-                return;
+                (Some(l), Some(r))
+                    if matches!(l, Ty::InferVar(_)) && matches!(r, Ty::Int) => {
+                    let _ = infer::unify_types(
+                        l,
+                        &Ty::Int,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    ) && infer::unify_types(
+                        r,
+                        &Ty::Int,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    );
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Int,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
+                }
+                (Some(l), Some(r))
+                    if matches!(l, Ty::Int) && matches!(r, Ty::InferVar(_)) => {
+                    let _ = infer::unify_types(
+                        l,
+                        &Ty::Int,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    ) && infer::unify_types(
+                        r,
+                        &Ty::Int,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    );
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Int,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
+                }
+                (Some(l), Some(r)) if matches!(l, Ty::InferVar(_)) && matches!(r, Ty::InferVar(_)) => {
+                    // Arbitrary default for fully-inferred arithmetic.
+                    let _ = infer::unify_types(
+                        l,
+                        &Ty::Int,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    ) && infer::unify_types(
+                        r,
+                        &Ty::Int,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    );
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Int,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
+                }
+                (Some(Ty::Float), Some(Ty::Float)) if arith_allows_float => {
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Float,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
+                }
+                (Some(l), Some(r))
+                    if arith_allows_float
+                        && matches!(l, Ty::InferVar(_))
+                        && matches!(r, Ty::Float) => {
+                    let _ = infer::unify_types(
+                        l,
+                        &Ty::Float,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    ) && infer::unify_types(
+                        r,
+                        &Ty::Float,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    );
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Float,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
+                }
+                (Some(l), Some(r))
+                    if arith_allows_float
+                        && matches!(l, Ty::Float)
+                        && matches!(r, Ty::InferVar(_)) => {
+                    let _ = infer::unify_types(
+                        l,
+                        &Ty::Float,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    ) && infer::unify_types(
+                        r,
+                        &Ty::Float,
+                        &mut ctx.infer_ctx,
+                        errors,
+                        *span,
+                    );
+                    assign_pattern_types(
+                        &Pattern::Binding {
+                            name: name.clone(),
+                            name_span: *span,
+                        },
+                        &Ty::Float,
+                        rhs,
+                        ctx,
+                        errors,
+                    );
+                }
+                _ if arith_allows_float => {
+                    errors.push(SemanticError::new(
+                        "compound assignment requires `Int` or `Float` operands of the same type",
+                        *span,
+                    ));
+                }
+                _ => {
+                    errors.push(SemanticError::new(
+                        "compound assignment requires `Int` operands",
+                        *span,
+                    ));
+                }
             }
-            assign_pattern_types(
-                &Pattern::Binding {
-                    name: name.clone(),
-                    name_span: *span,
-                },
-                &Ty::Int,
-                rhs,
-                ctx,
-                errors,
-            );
         }
         _ => {
             errors.push(SemanticError::new(
@@ -4045,6 +4200,7 @@ fn check_call(
 fn ty_to_receiver_key(ty: &Ty) -> Option<String> {
     match ty {
         Ty::Int => Some("Int".to_string()),
+        Ty::Float => Some("Float".to_string()),
         Ty::String => Some("String".to_string()),
         Ty::Bool => Some("Bool".to_string()),
         Ty::Unit => Some("()".to_string()),
@@ -4093,6 +4249,7 @@ fn check_expr(
 ) -> Option<Ty> {
     match expr {
         AstNode::IntegerLiteral { .. } => Some(Ty::Int),
+        AstNode::FloatLiteral { .. } => Some(Ty::Float),
         AstNode::StringLiteral { .. } => Some(Ty::String),
         AstNode::BoolLiteral { .. } => Some(Ty::Bool),
         AstNode::UnitLiteral { .. } => Some(Ty::Unit),
@@ -4911,11 +5068,17 @@ fn check_expr(
             match op {
                 BinaryOp::Add => match (&lt, &rt) {
                     (Some(Ty::Int), Some(Ty::Int)) => Some(Ty::Int),
+                    (Some(Ty::Float), Some(Ty::Float)) => Some(Ty::Float),
                     (Some(Ty::String), Some(Ty::String)) => Some(Ty::String),
                     (Some(Ty::InferVar(_)), Some(Ty::Int))
                     | (Some(Ty::Int), Some(Ty::InferVar(_))) => {
                         let _ = unify_to(Ty::Int);
                         Some(Ty::Int)
+                    }
+                    (Some(Ty::InferVar(_)), Some(Ty::Float))
+                    | (Some(Ty::Float), Some(Ty::InferVar(_))) => {
+                        let _ = unify_to(Ty::Float);
+                        Some(Ty::Float)
                     }
                     (Some(Ty::InferVar(_)), Some(Ty::String))
                     | (Some(Ty::String), Some(Ty::InferVar(_))) => {
@@ -4924,21 +5087,37 @@ fn check_expr(
                     }
                     _ => {
                         errors.push(SemanticError::new(
-                            "operator `+` is only defined for `Int + Int` or `String + String`",
+                            "operator `+` is only defined for `Int + Int`, `Float + Float`, or `String + String`",
                             *span,
                         ));
                         None
                     }
                 },
                 BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                    if (lt == Some(Ty::Int) && rt == Some(Ty::Int)) || unify_to(Ty::Int) {
-                        Some(Ty::Int)
-                    } else {
-                        errors.push(SemanticError::new(
-                            "arithmetic operators require `Int` operands",
-                            *span,
-                        ));
-                        None
+                    match (&lt, &rt) {
+                        (Some(Ty::Int), Some(Ty::Int)) => Some(Ty::Int),
+                        (Some(Ty::Float), Some(Ty::Float)) => Some(Ty::Float),
+                        (Some(Ty::InferVar(_)), Some(Ty::Int))
+                        | (Some(Ty::Int), Some(Ty::InferVar(_))) => {
+                            let _ = unify_to(Ty::Int);
+                            Some(Ty::Int)
+                        }
+                        (Some(Ty::InferVar(_)), Some(Ty::Float))
+                        | (Some(Ty::Float), Some(Ty::InferVar(_))) => {
+                            let _ = unify_to(Ty::Float);
+                            Some(Ty::Float)
+                        }
+                        (Some(Ty::InferVar(_)), Some(Ty::InferVar(_))) => {
+                            let _ = unify_to(Ty::Int);
+                            Some(Ty::Int)
+                        }
+                        _ => {
+                            errors.push(SemanticError::new(
+                                "arithmetic operators require `Int` or `Float` operands of the same type",
+                                *span,
+                            ));
+                            None
+                        }
                     }
                 }
                 BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
@@ -4972,7 +5151,9 @@ fn check_expr(
                         None
                     }
                     (Some(a), Some(b)) if a == b => match a {
-                        Ty::Int | Ty::String | Ty::Bool | Ty::Unit => Some(Ty::Bool),
+                        Ty::Int | Ty::Float | Ty::String | Ty::Bool | Ty::Unit => {
+                            Some(Ty::Bool)
+                        }
                         Ty::Tuple(_) => Some(Ty::Bool),
                         Ty::Array(_) => Some(Ty::Bool),
                         Ty::Enum { .. } => {
@@ -5033,14 +5214,30 @@ fn check_expr(
                     _ => None,
                 },
                 BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
-                    if (lt == Some(Ty::Int) && rt == Some(Ty::Int)) || unify_to(Ty::Int) {
-                        Some(Ty::Bool)
-                    } else {
-                        errors.push(SemanticError::new(
-                            "ordering comparisons `<`, `>`, `<=`, `>=` require `Int` operands",
-                            *span,
-                        ));
-                        None
+                    match (&lt, &rt) {
+                        (Some(Ty::Int), Some(Ty::Int)) => Some(Ty::Bool),
+                        (Some(Ty::Float), Some(Ty::Float)) => Some(Ty::Bool),
+                        (Some(Ty::InferVar(_)), Some(Ty::Int))
+                        | (Some(Ty::Int), Some(Ty::InferVar(_))) => {
+                            let _ = unify_to(Ty::Int);
+                            Some(Ty::Bool)
+                        }
+                        (Some(Ty::InferVar(_)), Some(Ty::Float))
+                        | (Some(Ty::Float), Some(Ty::InferVar(_))) => {
+                            let _ = unify_to(Ty::Float);
+                            Some(Ty::Bool)
+                        }
+                        (Some(Ty::InferVar(_)), Some(Ty::InferVar(_))) => {
+                            let _ = unify_to(Ty::Int);
+                            Some(Ty::Bool)
+                        }
+                        _ => {
+                            errors.push(SemanticError::new(
+                                "ordering comparisons `<`, `>`, `<=`, `>=` require `Int` or `Float` operands of the same type",
+                                *span,
+                            ));
+                            None
+                        }
                     }
                 }
                 BinaryOp::And | BinaryOp::Or => {
@@ -5083,14 +5280,31 @@ fn check_expr(
                         None
                     }
                 }
-                UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot => {
+                UnaryOp::BitNot => {
                     if t.as_ref().is_some_and(|tt| {
                         infer::unify_types(tt, &Ty::Int, &mut ctx.infer_ctx, errors, *span)
                     }) {
                         Some(Ty::Int)
                     } else {
                         errors.push(SemanticError::new(
-                            "unary `+`, `-`, and `~` require an `Int` operand",
+                            "unary `~` requires an `Int` operand",
+                            *span,
+                        ));
+                        None
+                    }
+                }
+                UnaryOp::Plus | UnaryOp::Minus => {
+                    if t.as_ref().is_some_and(|tt| {
+                        infer::unify_types(tt, &Ty::Int, &mut ctx.infer_ctx, errors, *span)
+                    }) {
+                        Some(Ty::Int)
+                    } else if t.as_ref().is_some_and(|tt| {
+                        infer::unify_types(tt, &Ty::Float, &mut ctx.infer_ctx, errors, *span)
+                    }) {
+                        Some(Ty::Float)
+                    } else {
+                        errors.push(SemanticError::new(
+                            "unary `+` and `-` require an `Int` or `Float` operand",
                             *span,
                         ));
                         None
@@ -5578,6 +5792,7 @@ fn check_expr(
                             fn ty_to_type_expr(ty: &Ty) -> TypeExpr {
                                 match ty {
                                     Ty::Int => TypeExpr::Named("Int".to_string()),
+                                    Ty::Float => TypeExpr::Named("Float".to_string()),
                                     Ty::String => TypeExpr::Named("String".to_string()),
                                     Ty::Bool => TypeExpr::Named("Bool".to_string()),
                                     Ty::Any | Ty::InferVar(_) => TypeExpr::Infer,
@@ -5663,6 +5878,7 @@ fn check_expr(
 fn expr_span(expr: &AstNode) -> Span {
     match expr {
         AstNode::IntegerLiteral { span, .. }
+        | AstNode::FloatLiteral { span, .. }
         | AstNode::StringLiteral { span, .. }
         | AstNode::Identifier { span, .. }
         | AstNode::BinaryOp { span, .. }
@@ -5687,6 +5903,7 @@ fn expr_span(expr: &AstNode) -> Span {
 fn ty_name(t: &Ty) -> String {
     match t {
         Ty::Int => "Int".to_string(),
+        Ty::Float => "Float".to_string(),
         Ty::String => "String".to_string(),
         Ty::Bool => "Bool".to_string(),
         Ty::Unit => "()".to_string(),
@@ -5829,6 +6046,55 @@ func main() {
         let errs = check_src("func main() { let x: Any = 1; let _ = x == 1; }");
         assert!(
             errs.iter().any(|e| e.message.contains("Any")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn float_arithmetic_and_ordering_ok() {
+        let errs = check_src(
+            r#"func main() {
+                let _: Float = 1.0 + 2.0;
+                let _: Bool = 1.0 < 2.0;
+            }"#,
+        );
+        assert!(errs.is_empty(), "{:?}", errs);
+    }
+
+    #[test]
+    fn float_bitnot_rejected() {
+        let errs = check_src("func main() { let _ = ~1.0; }");
+        assert!(
+            errs.iter().any(|e| e.message.contains("unary `~`") || e.message.contains("BitNot")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn float_string_plus_rejected() {
+        let errs = check_src(r#"func main() { let _ = ("a" + 1.0); }"#);
+        assert!(
+            errs.iter().any(|e| e.message.contains("operator `+`") && e.message.contains("Float")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn task_comparisons_rejected() {
+        let errs = check_src(
+            r#"internal struct Task<T = ()>;
+               internal async func sleep(ms: Int): Task;
+               async func main(): Task {
+                   let t = sleep(0);
+                   let _ = t == t;
+                   return await sleep(0);
+               }"#,
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("Task") && e.message.contains("operators")),
             "{:?}",
             errs
         );
@@ -6952,7 +7218,10 @@ func main() {{
 
     #[test]
     fn breadcrumb_edge_20_compare_operator_conflict() {
-        assert_sem_err_contains(r#"func main() { let a; a = "x"; let _ = a < 1; }"#, "require `Int` operands");
+        assert_sem_err_contains(
+            r#"func main() { let a; a = "x"; let _ = a < 1; }"#,
+            "require `Int` or `Float` operands",
+        );
     }
 
     #[test]
@@ -6977,7 +7246,10 @@ func main() {{
 
     #[test]
     fn breadcrumb_edge_25_compound_assign_conflict() {
-        assert_sem_err_contains(r#"func main() { let a; a = "x"; a += 1; }"#, "requires `Int` operands");
+        assert_sem_err_contains(
+            r#"func main() { let a; a = "x"; a += 1; }"#,
+            "requires `Int` or `Float` operands",
+        );
     }
 
     #[test]

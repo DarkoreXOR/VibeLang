@@ -1,0 +1,39 @@
+import { print_gen } from "std/core";
+
+func main() {
+    let f1: Float = 12_34_5.78_90;
+    let f2 = 456.789; // <- type inference
+
+    print_gen(f1 + f2);
+    print_gen(f1 - f2);
+    print_gen(f1 * f2);
+    print_gen(f1 / f2);
+
+    f1 += f2;
+    f1 -= f2;
+    f1 *= f2;
+    f1 /= f2;
+
+    // supported literals
+
+    let f3 = 1.0;
+
+    let f4 = 1e0;
+    let f5 = 1e-1;
+
+    let f6 = 1_e_-1;
+
+    let f7 = 1.5e0;
+    let f8 = 1.5e1;
+    let f9 = 1.5e-1;
+
+    let f10 = 1.5E10;
+
+    let b1 = f1 > f2;
+    let b2 = f1 >= f2;
+    let b3 = f1 < f2;
+    let b4 = f1 <= f2;
+    let b5 = f1 == f2;
+    let b6 = f1 != f2;
+}
+

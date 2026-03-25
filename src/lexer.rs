@@ -9,6 +9,12 @@ pub enum TokenKind {
         original: String,
         radix: u32, // 2, 8, 10, or 16
     },
+    FloatLiteral {
+        /// Original lexeme, including underscores (e.g. `1_e_-1`).
+        original: String,
+        /// Cleansed lexeme for numeric parsing (underscores removed).
+        cleaned: String,
+    },
     /// Decoded string value and the source lexeme (including surrounding `"`).
     StringLiteral {
         value: String,
@@ -204,7 +210,7 @@ impl Lexer {
             } else if matches!(self.peek(), '[' | ']') {
                 tokens.push(self.read_punct()?);
             } else if self.peek().is_ascii_digit() {
-                tokens.push(self.read_integer()?);
+                tokens.push(self.read_number_literal()?);
             } else {
                 let ch = self.peek();
                 let span = self.span_at(self.position, 1);
@@ -730,6 +736,125 @@ impl Lexer {
         })
     }
 
+    fn read_number_literal(&mut self) -> Result<Token, LexError> {
+        // Handle prefixed integers first (`0b...`, `0o...`, `0x...`).
+        if self.peek() == '0' {
+            if let Some(next) = self.peek_next() {
+                match next {
+                    'b' | 'B' | 'o' | 'O' | 'x' | 'X' => {
+                        return self.read_integer();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let token_start = self.position;
+
+        // Mantissa: digits + underscores.
+        while self.position < self.input.len() {
+            let ch = self.peek();
+            if ch.is_ascii_digit() || ch == '_' {
+                self.position += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut saw_dot = false;
+        let mut saw_exp = false;
+
+        // Optional fractional part: `.<digits...>`
+        if self.peek() == '.'
+            && self.peek_next() != Some('.')
+            && self.peek_next().is_some()
+        {
+            let _dot_start = self.position;
+            // Consume '.'.
+            self.position += 1;
+            saw_dot = true;
+
+            let mut has_frac_digit = false;
+            while self.position < self.input.len() {
+                let ch = self.peek();
+                if ch.is_ascii_digit() {
+                    has_frac_digit = true;
+                    self.position += 1;
+                } else if ch == '_' {
+                    self.position += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // If we didn't get any digits after '.', fall back to integer + '.' tokenization.
+            if !has_frac_digit {
+                // Rewind so the '.' can be lexed by the normal '.' logic.
+                self.position = _dot_start;
+                saw_dot = false;
+            }
+        }
+
+        // Optional exponent part: `e[+/-]<digits...>`
+        if matches!(self.peek(), 'e' | 'E') {
+            saw_exp = true;
+            self.position += 1; // consume e/E
+
+            while self.position < self.input.len() && self.peek() == '_' {
+                self.position += 1;
+            }
+
+            if matches!(self.peek(), '+' | '-') {
+                self.position += 1;
+            }
+
+            while self.position < self.input.len() && self.peek() == '_' {
+                self.position += 1;
+            }
+
+            let mut has_exp_digit = false;
+            while self.position < self.input.len() {
+                let ch = self.peek();
+                if ch.is_ascii_digit() {
+                    has_exp_digit = true;
+                    self.position += 1;
+                } else if ch == '_' {
+                    self.position += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if !has_exp_digit {
+                // Not a valid float exponent; treat as integer and let parser see `e` as identifier.
+                saw_exp = false;
+            }
+        }
+
+        let span = self.span_at(token_start, self.position - token_start);
+        let original = self.input[token_start..self.position]
+            .iter()
+            .collect::<String>();
+        let cleaned = original.replace('_', "");
+
+        if saw_dot || saw_exp {
+            Ok(Token {
+                kind: TokenKind::FloatLiteral { original, cleaned },
+                span,
+            })
+        } else {
+            let value = u64::from_str_radix(&cleaned, 10).unwrap_or(0);
+            Ok(Token {
+                kind: TokenKind::IntegerLiteral {
+                    value,
+                    original,
+                    radix: 10,
+                },
+                span,
+            })
+        }
+    }
+
     fn read_prefixed_integer(
         &mut self,
         literal_type: &str,
@@ -927,6 +1052,89 @@ mod tests {
                 value: 12345678,
                 original: "12_345_678".to_string(),
                 radix: 10
+            }
+        );
+    }
+
+    #[test]
+    fn test_float_decimal_literals() {
+        let mut lexer = Lexer::new("1.0 12.34");
+        let tokens = lexer.tokenize().unwrap();
+        // 2 literals + Eof
+        assert_eq!(tokens.len(), 3);
+
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::FloatLiteral {
+                original: "1.0".to_string(),
+                cleaned: "1.0".to_string()
+            }
+        );
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::FloatLiteral {
+                original: "12.34".to_string(),
+                cleaned: "12.34".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_float_exponent_literals() {
+        let mut lexer = Lexer::new("1e0 1e-1 1E10 1.5e-1");
+        let tokens = lexer.tokenize().unwrap();
+        // 4 literals + Eof
+        assert_eq!(tokens.len(), 5);
+
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::FloatLiteral {
+                original: "1e0".to_string(),
+                cleaned: "1e0".to_string()
+            }
+        );
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::FloatLiteral {
+                original: "1e-1".to_string(),
+                cleaned: "1e-1".to_string()
+            }
+        );
+        assert_eq!(
+            tokens[2].kind,
+            TokenKind::FloatLiteral {
+                original: "1E10".to_string(),
+                cleaned: "1E10".to_string()
+            }
+        );
+        assert_eq!(
+            tokens[3].kind,
+            TokenKind::FloatLiteral {
+                original: "1.5e-1".to_string(),
+                cleaned: "1.5e-1".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_float_underscores() {
+        let mut lexer = Lexer::new("12_34_5.78_90 1_e_-1");
+        let tokens = lexer.tokenize().unwrap();
+        // 2 literals + Eof
+        assert_eq!(tokens.len(), 3);
+
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::FloatLiteral {
+                original: "12_34_5.78_90".to_string(),
+                cleaned: "12345.7890".to_string()
+            }
+        );
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::FloatLiteral {
+                original: "1_e_-1".to_string(),
+                cleaned: "1e-1".to_string()
             }
         );
     }

@@ -5,6 +5,7 @@ use std::rc::Rc;
 use num_bigint::BigInt;
 
 use crate::async_runtime::TaskId;
+use astro_float::BigFloat;
 
 #[derive(Debug)]
 pub struct StructInstance {
@@ -16,6 +17,7 @@ pub struct StructInstance {
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(BigInt),
+    Float(BigFloat),
     String(String),
     Bool(bool),
     Unit,
@@ -43,6 +45,7 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
@@ -84,6 +87,7 @@ impl Value {
     pub fn deep_clone(&self) -> Value {
         match self {
             Value::Int(i) => Value::Int(i.clone()),
+            Value::Float(f) => Value::Float(f.clone()),
             Value::String(s) => Value::String(s.clone()),
             Value::Bool(b) => Value::Bool(*b),
             Value::Unit => Value::Unit,

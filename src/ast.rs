@@ -226,6 +226,13 @@ pub enum AstNode {
         radix: u32,
         span: Span,
     },
+    FloatLiteral {
+        /// Original lexeme, including underscores.
+        original: String,
+        /// Cleansed lexeme for numeric parsing (underscores removed).
+        cleaned: String,
+        span: Span,
+    },
     StringLiteral {
         value: String,
         original: String,

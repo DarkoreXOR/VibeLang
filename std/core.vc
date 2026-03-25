@@ -9,7 +9,14 @@ export enum Result<T, E> {
 }
 
 export internal func print_gen<T>(t: T);
-export internal func itos(value: Int): String;
-export internal func stoi(value: String): Int;
 export internal func int_array_len(a: [Int]): Int;
 export internal func rand_int(hi: Int): Int;
+
+// convert
+
+export internal func itos(value: Int): String;
+export internal func itof(value: Int): Float;
+export internal func stoi(value: String): Int;
+export internal func stof(value: String): Float;
+export internal func ftoi(value: Float): Int;
+export internal func ftos(value: Float, precision: Int): String;

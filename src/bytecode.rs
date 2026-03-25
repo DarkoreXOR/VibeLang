@@ -11,6 +11,11 @@ pub enum Instr {
         radix: u32,
         span: Span,
     },
+    PushFloat {
+        /// Cleansed (underscores removed) float literal string.
+        value: String,
+        span: Span,
+    },
     PushString { value: String },
     PushBool { value: bool },
     PushUnit,

@@ -10,6 +10,10 @@ use num_traits::{Signed, ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use astro_float::{BigFloat, Consts, Radix, RoundingMode};
+
+const FLOAT_PRECISION_BITS: usize = 1024;
+
 #[derive(Debug)]
 pub struct VmError {
     pub message: String,
@@ -131,6 +135,7 @@ pub fn run_program_with_builtins(
         .ok_or_else(|| VmError::new("missing `main` function in bytecode", None))?;
 
     let mut runtime: AsyncRuntime<TaskContext> = AsyncRuntime::new();
+    let mut float_consts = Consts::new().expect("astro-float constants cache");
     let main_ctx = TaskContext::User {
         frames: vec![Frame {
             kind: FrameKind::Init,
@@ -196,6 +201,7 @@ pub fn run_program_with_builtins(
                             operand_ref,
                             builtins,
                             main_idx,
+                            &mut float_consts,
                             &mut runtime,
                             task_id,
                             now_ms,
@@ -271,6 +277,7 @@ fn vm_execute_tick(
     operand_stack: &mut Vec<Value>,
     builtins: &crate::builtins::BuiltinRegistry,
     main_idx: usize,
+    float_consts: &mut Consts,
     runtime: &mut AsyncRuntime<TaskContext>,
     _task_id: TaskId,
     now_ms: u64,
@@ -339,6 +346,16 @@ fn vm_execute_tick(
                 let i = BigInt::parse_bytes(digits.as_bytes(), radix)
                     .ok_or_else(|| VmError::new("invalid integer literal", Some(span)))?;
                 operand_stack.push(Value::Int(i));
+            }
+            Instr::PushFloat { value, .. } => {
+                let f = BigFloat::parse(
+                    &value,
+                    Radix::Dec,
+                    FLOAT_PRECISION_BITS,
+                    RoundingMode::ToEven,
+                    float_consts,
+                );
+                operand_stack.push(Value::Float(f));
             }
             Instr::PushString { value } => operand_stack.push(Value::String(value)),
             Instr::PushBool { value } => operand_stack.push(Value::Bool(value)),
@@ -1054,8 +1071,16 @@ fn as_int(v: Value, span: Option<Span>) -> Result<BigInt, VmError> {
 fn eval_unop(v: Value, op: UnaryOp, span: Span) -> Result<Value, VmError> {
     match op {
         UnaryOp::Not => Ok(Value::Bool(!as_bool(v, Some(span))?)),
-        UnaryOp::Plus => Ok(Value::Int(as_int(v, Some(span))?)),
-        UnaryOp::Minus => Ok(Value::Int(-as_int(v, Some(span))?)),
+        UnaryOp::Plus => match v {
+            Value::Int(i) => Ok(Value::Int(i)),
+            Value::Float(f) => Ok(Value::Float(f)),
+            _ => Err(VmError::new("unary + expects Int or Float", Some(span))),
+        },
+        UnaryOp::Minus => match v {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(f.neg())),
+            _ => Err(VmError::new("unary - expects Int or Float", Some(span))),
+        },
         UnaryOp::BitNot => Ok(Value::Int(!as_int(v, Some(span))?)),
     }
 }
@@ -1064,31 +1089,59 @@ fn eval_binop(l: Value, op: BinaryOp, r: Value, span: Span) -> Result<Value, VmE
     match op {
         BinaryOp::Add => match (l, r) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(
+                a.add(&b, FLOAT_PRECISION_BITS, RoundingMode::ToEven),
+            )),
             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}"))),
-            _ => Err(VmError::new("`+` expects Int+Int or String+String", Some(span))),
+            _ => Err(VmError::new(
+                "`+` expects Int+Int, Float+Float, or String+String",
+                Some(span),
+            )),
         },
-        BinaryOp::Sub => Ok(Value::Int(as_int(l, Some(span))? - as_int(r, Some(span))?)),
-        BinaryOp::Mul => Ok(Value::Int(as_int(l, Some(span))? * as_int(r, Some(span))?)),
+        BinaryOp::Sub => match (l, r) {
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(
+                a.sub(&b, FLOAT_PRECISION_BITS, RoundingMode::ToEven),
+            )),
+            _ => Err(VmError::new("`-` expects Int-Int or Float-Float", Some(span))),
+        },
+        BinaryOp::Mul => match (l, r) {
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(
+                a.mul(&b, FLOAT_PRECISION_BITS, RoundingMode::ToEven),
+            )),
+            _ => Err(VmError::new("`*` expects Int-Int or Float-Float", Some(span))),
+        },
         BinaryOp::Div => {
-            let a = as_int(l, Some(span))?;
-            let b = as_int(r, Some(span))?;
-            if b.is_zero() {
-                return Err(VmError::new("division by zero", Some(span)));
+            match (l, r) {
+                (Value::Int(a), Value::Int(b)) => {
+                    if b.is_zero() {
+                        return Err(VmError::new("division by zero", Some(span)));
+                    }
+                    Ok(Value::Int(a / b))
+                }
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Float(
+                    a.div(&b, FLOAT_PRECISION_BITS, RoundingMode::ToEven),
+                )),
+                _ => Err(VmError::new("`/` expects Int/Int or Float/Float", Some(span))),
             }
-            Ok(Value::Int(a / b))
         }
         BinaryOp::Mod => {
-            let a = as_int(l, Some(span))?;
-            let b = as_int(r, Some(span))?;
-            if b.is_zero() {
-                return Err(VmError::new("modulo by zero", Some(span)));
+            match (l, r) {
+                (Value::Int(a), Value::Int(b)) => {
+                    if b.is_zero() {
+                        return Err(VmError::new("modulo by zero", Some(span)));
+                    }
+                    // Divisor-sign remainder semantics (Python-style).
+                    let mut rem = a % &b;
+                    if !rem.is_zero() && rem.signum() != b.signum() {
+                        rem += b;
+                    }
+                    Ok(Value::Int(rem))
+                }
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.rem(&b))),
+                _ => Err(VmError::new("`%` expects Int%Int or Float%Float", Some(span))),
             }
-            // Divisor-sign remainder semantics (Python-style).
-            let mut rem = a % &b;
-            if !rem.is_zero() && rem.signum() != b.signum() {
-                rem += b;
-            }
-            Ok(Value::Int(rem))
         }
         BinaryOp::BitAnd => Ok(Value::Int(as_int(l, Some(span))? & as_int(r, Some(span))?)),
         BinaryOp::BitXor => Ok(Value::Int(as_int(l, Some(span))? ^ as_int(r, Some(span))?)),
@@ -1127,15 +1180,26 @@ fn eval_binop(l: Value, op: BinaryOp, r: Value, span: Span) -> Result<Value, VmE
             l != r
         })),
         BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
-            let a = as_int(l, Some(span))?;
-            let b = as_int(r, Some(span))?;
-            Ok(Value::Bool(match op {
-                BinaryOp::Lt => a < b,
-                BinaryOp::Gt => a > b,
-                BinaryOp::Le => a <= b,
-                BinaryOp::Ge => a >= b,
-                _ => unreachable!(),
-            }))
+            match (l, r) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(match op {
+                    BinaryOp::Lt => a < b,
+                    BinaryOp::Gt => a > b,
+                    BinaryOp::Le => a <= b,
+                    BinaryOp::Ge => a >= b,
+                    _ => unreachable!(),
+                })),
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(match op {
+                    BinaryOp::Lt => a.lt(&b),
+                    BinaryOp::Gt => a.gt(&b),
+                    BinaryOp::Le => a.le(&b),
+                    BinaryOp::Ge => a.ge(&b),
+                    _ => unreachable!(),
+                })),
+                _ => Err(VmError::new(
+                    "ordering comparisons require Int-Int or Float-Float",
+                    Some(span),
+                )),
+            }
         }
         BinaryOp::And | BinaryOp::Or => Err(VmError::new(
             "internal error: short-circuit handled by codegen",
@@ -1272,6 +1336,20 @@ mod tests {
                    let x: Int = stoi("7");
                    if x == 7 { let _: Int = 1; } else { let _: Int = 1 / 0; }
                }"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn vm_float_arithmetic_and_comparisons() {
+        run_both(
+            r#"func main() {
+                if !((1.0 + 2.0) == 3.0) { let _: Int = 1 / 0; }
+                if !((5.0 - 2.0) == 3.0) { let _: Int = 1 / 0; }
+                if !((3.0 * 2.0) == 6.0) { let _: Int = 1 / 0; }
+                if !((6.0 / 2.0) == 3.0) { let _: Int = 1 / 0; }
+                if !((5.0 % 2.0) == 1.0) { let _: Int = 1 / 0; }
+            }"#,
         )
         .unwrap();
     }

@@ -21,6 +21,7 @@ impl InferCtx {
 fn ty_name(ty: &Ty) -> String {
     match ty {
         Ty::Int => "Int".to_string(),
+        Ty::Float => "Float".to_string(),
         Ty::String => "String".to_string(),
         Ty::Bool => "Bool".to_string(),
         Ty::Unit => "()".to_string(),

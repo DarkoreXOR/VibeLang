@@ -347,6 +347,7 @@ impl<'a> FnGen<'a> {
     fn infer_receiver_ty_key(&self, expr: &AstNode) -> Option<TyKey> {
         match expr {
             AstNode::IntegerLiteral { .. } => Some(TyKey::Ident("Int".to_string())),
+            AstNode::FloatLiteral { .. } => Some(TyKey::Ident("Float".to_string())),
             AstNode::StringLiteral { .. } => Some(TyKey::Ident("String".to_string())),
             AstNode::BoolLiteral { .. } => Some(TyKey::Ident("Bool".to_string())),
             AstNode::UnitLiteral { .. } => Some(TyKey::Unit),
@@ -966,6 +967,13 @@ impl<'a> FnGen<'a> {
                 self.emit(Instr::PushInt {
                     value: original.clone(),
                     radix: *radix,
+                    span: *span,
+                });
+                Ok(())
+            }
+            AstNode::FloatLiteral { cleaned, span, .. } => {
+                self.emit(Instr::PushFloat {
+                    value: cleaned.clone(),
                     span: *span,
                 });
                 Ok(())

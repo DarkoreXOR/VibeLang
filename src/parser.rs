@@ -152,6 +152,15 @@ impl Parser {
                     span,
                 })
             }
+            TokenKind::FloatLiteral { original, cleaned } => {
+                let span = token.span;
+                self.advance();
+                Ok(AstNode::FloatLiteral {
+                    original,
+                    cleaned,
+                    span,
+                })
+            }
             TokenKind::StringLiteral { value, original } => {
                 let span = token.span;
                 self.advance();
@@ -1848,7 +1857,9 @@ impl Parser {
                     }),
                 }
             }
-            TokenKind::IntegerLiteral { .. } | TokenKind::StringLiteral { .. } => {
+            TokenKind::IntegerLiteral { .. }
+            | TokenKind::FloatLiteral { .. }
+            | TokenKind::StringLiteral { .. } => {
                 Err(ParseError::UnexpectedToken {
                     message: "unexpected literal; expected a statement".to_string(),
                     span: Some(self.peek().span),
@@ -2649,6 +2660,15 @@ impl Parser {
                     span,
                 })
             }
+            TokenKind::FloatLiteral { original, cleaned } => {
+                let span = token.span;
+                self.advance();
+                Ok(AstNode::FloatLiteral {
+                    original,
+                    cleaned,
+                    span,
+                })
+            }
             TokenKind::True => {
                 let span = token.span;
                 self.advance();
@@ -3249,6 +3269,29 @@ mod tests {
                         radix: 10,
                         ..
                     } if original == "42"
+                ));
+            }
+            _ => panic!("Expected Program node"),
+        }
+    }
+
+    #[test]
+    fn test_parse_float_literal() {
+        let mut lexer = Lexer::new("12_34_5.78_90");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+
+        match ast {
+            AstNode::Program(nodes) => {
+                assert_eq!(nodes.len(), 1);
+                assert!(matches!(
+                    nodes[0],
+                    AstNode::FloatLiteral {
+                        ref original,
+                        ref cleaned,
+                        ..
+                    } if original == "12_34_5.78_90" && cleaned == "12345.7890"
                 ));
             }
             _ => panic!("Expected Program node"),

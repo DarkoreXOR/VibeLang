@@ -152,6 +152,15 @@ impl Visit for PrettyPrinter {
                     "IntegerLiteral {{ value: {value}, original: {original:?}, radix: {radix} }}"
                 ));
             }
+            AstNode::FloatLiteral {
+                original,
+                cleaned,
+                ..
+            } => {
+                self.line(&format!(
+                    "FloatLiteral {{ original: {original:?}, cleaned: {cleaned:?} }}"
+                ));
+            }
             AstNode::StringLiteral { value, original, .. } => {
                 self.line(&format!(
                     "StringLiteral {{ value: {value:?}, original: {original:?} }}"

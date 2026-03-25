@@ -13,6 +13,7 @@ impl PrintGenBuiltin {
     fn fmt_value(v: &Value) -> String {
         match v {
             Value::Int(i) => format!("{i}"),
+            Value::Float(f) => f.to_string(),
             Value::String(s) => s.clone(),
             Value::Bool(b) => format!("{b}"),
             Value::Unit => "()".to_string(),
