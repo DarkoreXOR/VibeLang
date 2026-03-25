@@ -24,6 +24,7 @@ mod rand_bigint;
 mod stoi;
 mod sleep;
 mod wait_all_tasks;
+mod create_completed_task;
 
 use concat::ConcatBuiltin;
 use input::InputBuiltin;
@@ -39,6 +40,7 @@ use rand_bigint::RandBigIntBuiltin;
 use stoi::StoiBuiltin;
 use sleep::SleepBuiltin;
 use wait_all_tasks::WaitAllTasksBuiltin;
+use create_completed_task::CreateCompletedTaskBuiltin;
 
 #[derive(Debug)]
 pub struct BuiltinError {
@@ -112,6 +114,11 @@ impl BuiltinRegistry {
         if let Some(b) = self.builtins.get("wait_all_tasks_async") {
             if b.validate_decl(params, return_type, name_span).is_ok() {
                 return Ok("wait_all_tasks_async");
+            }
+        }
+        if let Some(b) = self.builtins.get("create_completed_task_async") {
+            if b.validate_decl(params, return_type, name_span).is_ok() {
+                return Ok("create_completed_task_async");
             }
         }
         Err(BuiltinError::new(
@@ -188,6 +195,7 @@ fn default_registry_impl() -> BuiltinRegistry {
     reg.register(RandBigIntBuiltin);
     reg.register(SleepBuiltin);
     reg.register(WaitAllTasksBuiltin);
+    reg.register(CreateCompletedTaskBuiltin);
     reg
 }
 

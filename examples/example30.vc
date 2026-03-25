@@ -1,0 +1,16 @@
+import { print_gen } from "std/core";
+import { Task } from "std/async";
+
+func non_async_func(): Task { // async 
+    print_gen("hello");
+    
+    return Task::completed(());
+}
+
+async func main(): Task {
+    let t1 = non_async_func(); // `t1` is infered as Task<()>
+    let t2: Task<()> = t1;
+    let t3 = await t2; // await `Task<()>`
+
+    print_gen(t2); // prints ()
+}

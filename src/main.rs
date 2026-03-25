@@ -10,8 +10,15 @@ use vibelang::bytecode_gen::compile_program;
 use vibelang::module_loader::load_linked_program;
 
 fn print_span_snippet(source: &str, span: Span) {
+    // If the span came from an imported module, prefer that module's source for snippet printing.
+    let module_source = span.file.and_then(|path| fs::read_to_string(path).ok());
+    let source_for_snippet = match &module_source {
+        Some(s) => s.as_str(),
+        None => source,
+    };
+
     let line_idx = span.line.saturating_sub(1);
-    let line = source
+    let line = source_for_snippet
         .lines()
         .nth(line_idx)
         .unwrap_or("<failed to fetch source line>");
@@ -114,7 +121,11 @@ fn main() {
     let sem_errors = check_program(&ast);
     if !sem_errors.is_empty() {
         for err in &sem_errors {
-            eprintln!("{}", err.format_with_file(filename));
+            let header_path: &str = match err.span.file {
+                Some(p) => p,
+                None => filename.as_str(),
+            };
+            eprintln!("{}", err.format_with_file(header_path));
             print_span_snippet(&source, err.span);
             eprintln!();
         }

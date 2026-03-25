@@ -828,44 +828,113 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                                 }
                             }
                         }
-                    } else if let TypeExpr::EnumApp { args, .. } = &ext.ty {
-                        if !args.iter().all(|a| matches!(a, TypeExpr::TypeParam(_))) {
-                            errors.push(SemanticError::new(
-                                "generic enum extension receiver must use only `type` parameters for enum arguments"
-                                    .to_string(),
-                                *name_span,
-                            ));
-                        } else {
-                            let mut ok = true;
-                            for a in args {
-                                if let TypeExpr::TypeParam(tp) = a {
-                                    if !type_params.iter().any(|p| p.name == *tp) {
-                                        errors.push(SemanticError::new(
-                                            format!(
-                                                "extension receiver enum type argument `{tp}` must be a type parameter of the function"
-                                            ),
-                                            *name_span,
-                                        ));
-                                        ok = false;
+                    } else if let TypeExpr::EnumApp {
+                        name: recv_name,
+                        args,
+                        ..
+                    } = &ext.ty
+                    {
+                        let all_type_params =
+                            args.iter().all(|a| matches!(a, TypeExpr::TypeParam(_)));
+
+                        // Old behavior (broken for structs): always enforced the
+                        // “generic enum extension receiver must use only `type` parameters ...”
+                        // rule, even when the receiver base was a concrete struct (e.g. `Task<()>`).
+                        if enums.contains_key(recv_name) {
+                            if !all_type_params {
+                                errors.push(SemanticError::new(
+                                    "generic enum extension receiver must use only `type` parameters for enum arguments"
+                                        .to_string(),
+                                    *name_span,
+                                ));
+                            } else {
+                                let mut ok = true;
+                                for a in args {
+                                    if let TypeExpr::TypeParam(tp) = a {
+                                        if !type_params.iter().any(|p| p.name == *tp) {
+                                            errors.push(SemanticError::new(
+                                                format!(
+                                                    "extension receiver enum type argument `{tp}` must be a type parameter of the function"
+                                                ),
+                                                *name_span,
+                                            ));
+                                            ok = false;
+                                        }
+                                    }
+                                }
+                                if ok {
+                                    let entry = generic_enum_ext
+                                        .entry(ext.method_name.clone())
+                                        .or_default();
+                                    if !entry.contains(&name) {
+                                        entry.insert(0, name.clone());
                                     }
                                 }
                             }
-                            if ok {
-                                let entry = generic_enum_ext
-                                    .entry(ext.method_name.clone())
-                                    .or_default();
-                                if !entry.contains(&name) {
-                                    entry.insert(0, name.clone());
-                                }
-                                // Also register generic `EnumApp` receivers that are structs (e.g. `Task<T>::wait_all`).
-                                if let TypeExpr::EnumApp { name: recv_name, .. } = &ext.ty {
-                                    if structs.contains_key(recv_name) {
-                                        let entry = generic_struct_ext
-                                            .entry(ext.method_name.clone())
-                                            .or_default();
-                                        if !entry.contains(&name) {
-                                            entry.push(name.clone());
+                        } else if structs.contains_key(recv_name) {
+                            // For structs, allow concrete args like `Task<()>` and only
+                            // participate in generic receiver registration when args are
+                            // truly type parameters.
+                            if all_type_params {
+                                let mut ok = true;
+                                for a in args {
+                                    if let TypeExpr::TypeParam(tp) = a {
+                                        if !type_params.iter().any(|p| p.name == *tp) {
+                                            errors.push(SemanticError::new(
+                                                format!(
+                                                    "extension receiver enum type argument `{tp}` must be a type parameter of the function"
+                                                ),
+                                                *name_span,
+                                            ));
+                                            ok = false;
                                         }
+                                    }
+                                }
+                                if ok {
+                                    let entry = generic_enum_ext
+                                        .entry(ext.method_name.clone())
+                                        .or_default();
+                                    if !entry.contains(&name) {
+                                        entry.insert(0, name.clone());
+                                    }
+                                    // Also register generic `EnumApp` receivers that are structs (e.g. `Task<T>::wait_all`).
+                                    let entry = generic_struct_ext
+                                        .entry(ext.method_name.clone())
+                                        .or_default();
+                                    if !entry.contains(&name) {
+                                        entry.push(name.clone());
+                                    }
+                                }
+                            }
+                        } else {
+                            // Unknown receiver base: keep the original strictness.
+                            if !all_type_params {
+                                errors.push(SemanticError::new(
+                                    "generic enum extension receiver must use only `type` parameters for enum arguments"
+                                        .to_string(),
+                                    *name_span,
+                                ));
+                            } else {
+                                let mut ok = true;
+                                for a in args {
+                                    if let TypeExpr::TypeParam(tp) = a {
+                                        if !type_params.iter().any(|p| p.name == *tp) {
+                                            errors.push(SemanticError::new(
+                                                format!(
+                                                    "extension receiver enum type argument `{tp}` must be a type parameter of the function"
+                                                ),
+                                                *name_span,
+                                            ));
+                                            ok = false;
+                                        }
+                                    }
+                                }
+                                if ok {
+                                    let entry = generic_enum_ext
+                                        .entry(ext.method_name.clone())
+                                        .or_default();
+                                    if !entry.contains(&name) {
+                                        entry.insert(0, name.clone());
                                     }
                                 }
                             }
@@ -3701,9 +3770,13 @@ fn check_return(
             }
         }
         (Some(ety), None) => {
+            // In non-async functions returning `Task<T>`, `return;` must be a `Unit`-typed return
+            // (i.e. only `: Unit` functions can omit an explicit value).
+            // In `async func` bodies returning `Task<T>`, `return;` can only omit a value when the
+            // payload type `T` is `Unit`.
             let unit_ok = match ety {
                 Ty::Unit => true,
-                Ty::Task(inner) => **inner == Ty::Unit,
+                Ty::Task(inner) => ctx.in_async && **inner == Ty::Unit,
                 _ => false,
             };
             if !unit_ok {
@@ -3714,8 +3787,11 @@ fn check_return(
             }
         }
         (Some(ety), Some(boxed)) => {
-            let expected = match ety {
-                Ty::Task(inner) => Some(inner.as_ref()),
+            // Language rule:
+            // - `async func ...: Task<T>`: `return expr;` returns a payload `T` (not `Task<T>`).
+            // - non-`async func ...: Task<T>`: `return expr;` returns a value of type `Task<T>`.
+            let expected = match (ety, ctx.in_async) {
+                (Ty::Task(inner), true) => Some(inner.as_ref()),
                 _ => Some(ety),
             };
             let got = if let Some(exp) = expected {
@@ -3723,8 +3799,8 @@ fn check_return(
             } else {
                 check_expr(boxed, ctx, errors)
             };
-            let unify_target: &Ty = match ety {
-                Ty::Task(inner) => inner.as_ref(),
+            let unify_target: &Ty = match (ety, ctx.in_async) {
+                (Ty::Task(inner), true) => inner.as_ref(),
                 _ => ety,
             };
             match got {

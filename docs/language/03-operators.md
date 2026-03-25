@@ -12,9 +12,12 @@ let b = 10 - 4;
 let c = 20 / 3;
 let d = 20 % -3; // divisor-sign remainder
 let e = ~1;
+// unary + / - are supported for Int and Float
+let u = +1.0;
+let v = -1.0;
 let f = 1 << 5;
-let g = 6 & 3;
-let h = true && !false;
+let w = 6 & 3;
+let x = true && !false;
 let s = "a" + "b";
 ```
 
@@ -22,11 +25,18 @@ let s = "a" + "b";
 
 - `+` supports:
   - `Int + Int`
+  - `Float + Float`
   - `String + String`
-- `- * / %` are `Int`-only.
-- `%` follows divisor-sign remainder semantics:
+- `- * / %` require same-type `Int` or `Float` operands:
+  - `Int - Int`
+  - `Float - Float`
+- `%` follows divisor-sign remainder semantics for `Int`:
   - `5 % -3 == -1`
   - `-5 % -3 == -2`
+  - `Float` remainder semantics follow the underlying `BigFloat` implementation.
+- Unary operators:
+  - `+x` / `-x` work for `Int` and `Float`
+  - `~x` (`BitNot`) is `Int`-only
 - Bitwise operators (`& | ^ ~`) are `Int`-only.
 - Shifts (`<< >>`) are `Int`-only.
 - Logical operators (`&& || !`) are `Bool`-only.

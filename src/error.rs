@@ -6,6 +6,10 @@ pub struct Span {
     pub line: usize,
     pub column: usize,
     pub len: usize,
+    /// Originating source file path (when available).
+    ///
+    /// This is primarily used for printing caret/snippets for errors that originate in imported modules.
+    pub file: Option<&'static str>,
 }
 
 impl Span {
@@ -14,6 +18,14 @@ impl Span {
             line,
             column,
             len,
+            file: None,
+        }
+    }
+
+    pub fn with_file(self, file: &'static str) -> Self {
+        Self {
+            file: Some(file),
+            ..self
         }
     }
 }

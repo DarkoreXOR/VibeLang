@@ -998,6 +998,22 @@ fn vm_execute_tick(
                     let tid = runtime.alloc_id();
                     runtime.set_ready(tid, TaskContext::WaitAll { tasks: task_ids, idx: 0 });
                     operand_stack.push(Value::Task(tid));
+                } else if canonical == "create_completed_task_async" {
+                    // `create_completed_task_async(value)` creates a completed task handle
+                    // immediately. The scheduler will let `await` observe completion.
+                    let payload = match args.into_iter().next() {
+                        Some(v) => v,
+                        None => {
+                            return Err(VmError::new(
+                                "`create_completed_task_async` expects a single argument",
+                                Some(span),
+                            ));
+                        }
+                    };
+
+                    let tid = runtime.alloc_id();
+                    runtime.complete(tid, payload);
+                    operand_stack.push(Value::Task(tid));
                 } else {
                     // User async function call: create a new execution context.
                     let tid = runtime.alloc_id();

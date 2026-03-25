@@ -23,7 +23,9 @@ func get(): Res<_> = Res::Ok(5);
   - `async func name(...): Task<Payload> { ... }` — body uses `await` on `Task` values; `return expr` returns the **payload** type `Payload` (the `Task<...>` wrapper is only in the signature).
   - `internal async func` is reserved for builtins such as `sleep` that return `Task`.
   - `await expr` is only valid inside `async` function bodies.
-  - Calls to `async` functions produce a pending `Task` immediately; the callee runs when the value is `await`ed.
+  - Calls to `async` functions produce a `Task` immediately; the runtime schedules tasks cooperatively (single-threaded) and progress happens when tasks `await` or yield.
+  - `await` suspends the current task until the awaited task is completed.
+  - `Task::wait_all(...)` waits for multiple tasks to finish.
   - `async` on extension methods and lambdas is rejected for now.
 - Default parameters:
   - `name: Type = expr`
@@ -114,4 +116,5 @@ func main() {
 ## See also
 
 - [Control Flow](./05-control-flow.md)
+- [Async and Tasks](./18-async.md)
 - [Modules](./14-modules.md)

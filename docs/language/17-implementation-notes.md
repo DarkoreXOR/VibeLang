@@ -27,6 +27,7 @@ The CLI performs semantic checking, then executes through the VM.
 - `Int` is arbitrary precision (`BigInt`).
 - Division `/` uses truncating integer division semantics.
 - Modulo `%` uses divisor-sign remainder semantics.
+- `Float` is implemented via arbitrary-precision `BigFloat` with `1024`-bit precision (rounded using `ToEven`).
 
 Examples:
 
@@ -45,6 +46,10 @@ Common builtins include:
 - `concat(a: String, b: String): String;`
 - `input(): String;`
 - `stoi(s: String): Int;`
+- `itof(value: Int): Float;`
+- `ftoi(value: Float): Int;`
+- `stof(value: String): Float;`
+- `ftos(value: Float, precision: Int): String;`
 - `rand_int(to: Int): Int;`
 - `rand_bigint(bits: Int): Int;`
 - `int_array_len(a: [T]): Int;`
@@ -52,13 +57,15 @@ Common builtins include:
 - `print_gen<T>(value: T);`
 - `clone<T>(value: T): T;`
 - `sleep(ms: Int): Task` (`internal async func`) — yields `Task<()>` completed after sleeping.
+- `Task<T>::wait_all<T>(params tasks: [Task<T>]): Task` (implemented via the internal `wait_all_tasks_async` helper).
 
 ## Async / `Task` (v1)
 
-- `Task<T>` is represented as `Value::Task` in the VM: either **deferred** (not yet run; stores callee name and arguments) or **completed** (payload).
-- Calls to user or internal `async` functions compile to `MakeDeferredTask` instead of a direct `Call`; `await` emits `AwaitTask`.
-- Awaiting a **deferred** user task pushes a normal call frame and runs that function to completion. Awaiting a **deferred** builtin runs the builtin immediately (for example `sleep` completes to `Task(Completed(()))` after sleeping).
-- There is no separate host “driver loop” in v1 beyond this eager completion model.
+- `Task<T>` is a VM-managed handle for a cooperatively scheduled async computation.
+- Calling an `async func` creates/schedules a task immediately; the callee runs until it hits an `await` (or finishes).
+- `await task_expr` suspends the current task until the awaited task completes; the VM then resumes it and yields any returned payload.
+- Timers (`sleep`) are non-blocking: they park a task until the deadline expires, while other ready tasks can run.
+- `Task::wait_all(...)` waits for multiple tasks and completes only once all tasks have finished.
 
 ## Related code and examples
 

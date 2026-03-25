@@ -124,6 +124,7 @@ pub const EOF_SENTINEL: Token = Token {
 pub struct Lexer {
     input: Vec<char>,
     position: usize,
+    file: Option<&'static str>,
 }
 
 impl Lexer {
@@ -131,6 +132,15 @@ impl Lexer {
         Lexer {
             input: input.chars().collect(),
             position: 0,
+            file: None,
+        }
+    }
+
+    pub fn new_with_file(input: &str, file: &'static str) -> Self {
+        Lexer {
+            input: input.chars().collect(),
+            position: 0,
+            file: Some(file),
         }
     }
 
@@ -151,7 +161,12 @@ impl Lexer {
 
     fn span_at(&self, index: usize, len: usize) -> Span {
         let (line, col) = self.char_index_to_line_col(index);
-        Span::new(line, col, len)
+        let span = Span::new(line, col, len);
+        if let Some(file) = self.file {
+            span.with_file(file)
+        } else {
+            span
+        }
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Token>, LexError> {

@@ -378,7 +378,11 @@ fn load_module_recursive(
 fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
     let source = fs::read_to_string(path)
         .map_err(|e| ModuleLoadError::with_path(path, format!("failed reading module: {e}")))?;
-    let mut lexer = Lexer::new(&source);
+    // Leak a stable `&'static str` module path for Span/file origin tracking.
+    // This is acceptable for CLI runs and improves diagnostics across module boundaries.
+    let file_str: &'static str =
+        Box::leak(path.to_string_lossy().into_owned().into_boxed_str());
+    let mut lexer = Lexer::new_with_file(&source, file_str);
     let tokens = lexer
         .tokenize()
         .map_err(|e| ModuleLoadError::with_path(path, e.to_string()))?;

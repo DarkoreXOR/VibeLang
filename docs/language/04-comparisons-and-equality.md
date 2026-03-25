@@ -16,9 +16,9 @@ let e = [1, 2] != [2, 1];
 
 ## Rules and constraints
 
-- Ordering (`< > <= >=`) works only on `Int`.
+- Ordering (`< > <= >=`) works on `Int` and `Float` (same-type operands).
 - Equality (`== !=`) works on:
-  - `Int`, `String`, `Bool`, `()`
+  - `Int`, `Float`, `String`, `Bool`, `()`
   - tuples and arrays of same shape/type
 - String ordering (like `"a" < "b"`) is not implemented.
 

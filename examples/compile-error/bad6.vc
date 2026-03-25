@@ -1,0 +1,10 @@
+import { print_gen } from "std/core";
+import { Task } from "std/async";
+
+func non_async_func() {
+    print_gen("hello");
+}
+
+async func main(): Task {
+    await non_async_func();
+}

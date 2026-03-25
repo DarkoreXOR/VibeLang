@@ -1198,6 +1198,35 @@ impl<'a> FnGen<'a> {
                 }
             }
             AstNode::Await { expr, span } => {
+                // Special-case `await` on identifiers:
+                // After awaiting, overwrite the original variable slot with the payload so the
+                // program can later use the identifier as its completed value (matches the
+                // expectations in `examples/example30.vc`).
+                if let AstNode::Identifier { name, .. } = expr.as_ref() {
+                    if let Some(slot) = self.resolve_var(name) {
+                        match slot.kind {
+                            VarSlotKind::Local => {
+                                self.emit(Instr::LoadLocal { slot: slot.slot, span: *span });
+                            }
+                            VarSlotKind::Global => {
+                                self.emit(Instr::LoadGlobal { slot: slot.slot, span: *span });
+                            }
+                        }
+                        self.emit(Instr::AwaitTask { span: *span });
+                        match slot.kind {
+                            VarSlotKind::Local => {
+                                self.emit(Instr::StoreLocal { slot: slot.slot, span: *span });
+                                self.emit(Instr::LoadLocal { slot: slot.slot, span: *span });
+                            }
+                            VarSlotKind::Global => {
+                                self.emit(Instr::StoreGlobal { slot: slot.slot, span: *span });
+                                self.emit(Instr::LoadGlobal { slot: slot.slot, span: *span });
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+
                 self.compile_expr(expr.as_ref())?;
                 self.emit(Instr::AwaitTask { span: *span });
                 Ok(())

@@ -29,8 +29,9 @@ let [h, t] = [1, 2];
 - Tuple field assignment (like `t.0 = 1`) is rejected semantically.
 - Array element assignment is supported: `a[i] = v;`
 - Struct field assignment is supported: `p.x = 1;`
-- Compound assignment is supported for `Int` variable names:
-  - `+= -= *= /= %= &= |= ^= <<= >>=`
+- Compound assignment is supported for `Int` and `Float` variable names (arithmetic ops):
+  - `+= -= *= /= %=` (Int/Float)
+  - `&= |= ^= <<= >>= ~` are `Int`-only (bitwise ops)
 
 ## Valid examples
 

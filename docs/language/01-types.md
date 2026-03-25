@@ -8,6 +8,7 @@ Vibelang is strongly typed. Values keep their declared/inferred type, and there 
 
 ```vc
 let i: Int = 42;
+let f: Float = 1.5e-1;
 let s: String = "hello";
 let b: Bool = true;
 let u: () = ();
@@ -22,8 +23,10 @@ type Res<T> = Result<T, String>;
 ## Rules and constraints
 
 - `Int` is arbitrary precision (`BigInt`) at runtime.
+- `Float` is arbitrary precision (`BigFloat`) at runtime, currently implemented with `1024`-bit mantissa precision.
 - Literal types:
   - integer literal -> `Int`
+  - float literal -> `Float`
   - string literal -> `String`
   - `true`/`false` -> `Bool`
 - Arrays use `[T]`.

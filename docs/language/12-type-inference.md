@@ -15,6 +15,7 @@ let z: [Int] = [];   // contextual typing
 ## Rules and constraints
 
 - If `let` has no annotation, type comes from initializer.
+- Float literals (e.g. `1.5`, `1e-3`, `12_34.5`) infer `Float`.
 - Local bindings may defer inference to first assignment:
   - `let a; a = foo();` infers `a` from `foo()` result type.
 - Inference is constraint-based across usage chains ("breadcrumbs"):
