@@ -119,6 +119,12 @@ pub fn walk_ast_node<V: Visit + ?Sized>(visitor: &mut V, node: &AstNode) {
                 visitor.visit_ast_node(e);
             }
         }
+        AstNode::DictLiteral { entries, .. } => {
+            for (k, v) in entries {
+                visitor.visit_ast_node(k);
+                visitor.visit_ast_node(v);
+            }
+        }
         AstNode::TupleField { base, .. } => visitor.visit_ast_node(base),
         AstNode::ArrayIndex { base, index, .. } => {
             visitor.visit_ast_node(base);

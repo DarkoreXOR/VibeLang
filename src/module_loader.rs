@@ -446,6 +446,10 @@ fn resolve_import_path(workspace: &Path, current_file: &Path, spec: &str) -> Opt
         let base = current_file.parent().unwrap_or_else(|| Path::new("."));
         candidates.push(base.join(spec));
     } else {
+        // Treat bare imports (e.g. `import { X } from "core"`) as relative to the
+        // importing module's directory first, and fall back to workspace-root.
+        let base = current_file.parent().unwrap_or_else(|| Path::new("."));
+        candidates.push(base.join(spec));
         candidates.push(workspace.join(spec));
     }
 

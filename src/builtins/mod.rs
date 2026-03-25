@@ -25,6 +25,7 @@ mod stoi;
 mod sleep;
 mod wait_all_tasks;
 mod create_completed_task;
+mod dict;
 
 use concat::ConcatBuiltin;
 use input::InputBuiltin;
@@ -41,6 +42,7 @@ use stoi::StoiBuiltin;
 use sleep::SleepBuiltin;
 use wait_all_tasks::WaitAllTasksBuiltin;
 use create_completed_task::CreateCompletedTaskBuiltin;
+use dict::{DictContainsBuiltin, DictGetBuiltin, DictInsertBuiltin, DictRemoveBuiltin};
 
 #[derive(Debug)]
 pub struct BuiltinError {
@@ -196,6 +198,10 @@ fn default_registry_impl() -> BuiltinRegistry {
     reg.register(SleepBuiltin);
     reg.register(WaitAllTasksBuiltin);
     reg.register(CreateCompletedTaskBuiltin);
+    reg.register(DictContainsBuiltin);
+    reg.register(DictGetBuiltin);
+    reg.register(DictInsertBuiltin);
+    reg.register(DictRemoveBuiltin);
     reg
 }
 

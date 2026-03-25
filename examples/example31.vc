@@ -1,0 +1,59 @@
+import { Option, print_gen } from "std/core";
+import { Dict } from "std/dict";
+
+func main() {
+    let d1: Dict<String, Float> = {
+        "v1": 5.0,
+        "v2": -3.0,
+        "v3": 123.456, // last comma is optional
+    };
+
+    print_gen(d1.contains("v2")); // prints true
+    print_gen(d1.contains("v4")); // prints false
+
+    print_gen(d1.get("v1")); // prints Option::Some(5.0)
+    print_gen(d1.get("v3")); // prints Option::Some(123.456...)
+    print_gen(d1.get("v0")); // prints Option::None
+
+    let d2: Dict<String, String> = {
+        "firstname": "John",
+        "lastname": "Darkman",
+        "bio": "unknown" // last comma is optional
+    };
+
+    let old1 = d2.insert("id", "0085070e-49a2-4b5e-b0d4-955dfe06579d");
+
+    if let Option::Some(val) = old1 {
+        print_gen(val); // <- unexpected condition path
+    } else {
+        print_gen("no old value"); // <- expected condition path
+    }
+
+    
+    let old2 = d2.insert("id", "0085070e-49a2-4b5e-b0d4-955dfe06579d");
+
+    if let Option::Some(val) = old2 {
+        print_gen(val); // <- expected condition path
+    } else {
+        print_gen("no old value"); // <- unexpected condition path
+    }
+
+    let old3 = d2.remove("id");
+
+    if let Option::Some(val) = old3 { 
+        // expected: val == "0085070e-49a2-4b5e-b0d4-955dfe06579d"
+        print_gen(val); // <- expected condition path
+    } else {
+        print_gen("no old value"); // <- unexpected condition path
+    }
+
+
+    let old4 = d2.remove("id");
+
+    if let Option::Some(val) = old4 { 
+        print_gen(val); // <- unexpected condition path
+    } else {
+        print_gen("no old value"); // <- expected condition path
+    }
+}
+

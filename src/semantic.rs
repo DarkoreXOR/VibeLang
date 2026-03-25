@@ -335,6 +335,67 @@ fn check_expr_expected(
         }
     }
 
+    // Dict literal contextual typing:
+    // `let d: Dict<K, V> = { "k": v, ... }` uses the annotation to validate each entry.
+    if let AstNode::DictLiteral { entries, .. } = expr {
+        if let Some(Ty::Struct(struct_name)) = expected {
+            if struct_base_name(struct_name) == "Dict" {
+                let span = expr_span(expr);
+
+                let te = crate::parser::Parser::parse_type_expr_from_source(struct_name);
+                let Ok(te) = te else {
+                    return check_expr(expr, ctx, errors);
+                };
+
+                let (key_te, value_te) = match te {
+                    TypeExpr::EnumApp { mut args, .. } if args.len() == 2 => {
+                        // Clone out args so we don't borrow across the match.
+                        let v0 = args.remove(0);
+                        let v1 = args.remove(0);
+                        (v0, v1)
+                    }
+                    _ => {
+                        errors.push(SemanticError::new(
+                            "dict type annotation must be `Dict<K, V>`".to_string(),
+                            span,
+                        ));
+                        return None;
+                    }
+                };
+
+                let Some(expected_key_ty) = ty_from_type_expr(
+                    &key_te,
+                    span,
+                    errors,
+                    &[],
+                    &ctx.structs,
+                    &ctx.enums,
+                    ctx.aliases,
+                ) else {
+                    return None;
+                };
+                let Some(expected_val_ty) = ty_from_type_expr(
+                    &value_te,
+                    span,
+                    errors,
+                    &[],
+                    &ctx.structs,
+                    &ctx.enums,
+                    ctx.aliases,
+                ) else {
+                    return None;
+                };
+
+                for (k, v) in entries {
+                    let _ = check_expr_expected(k, ctx, errors, Some(&expected_key_ty));
+                    let _ = check_expr_expected(v, ctx, errors, Some(&expected_val_ty));
+                }
+
+                return expected.cloned();
+            }
+        }
+    }
+
     // Enum constructor contextual typing (needed for `Option::None`-like variants).
     if let AstNode::EnumVariantCtor {
         enum_name,
@@ -749,6 +810,23 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                         extension_receiver_ty: None,
                     },
                 );
+
+                // Internal extension-receiver functions (e.g. `internal func Dict<K, V>::get(...)`)
+                // must participate in generic dispatch for `foo.bar(...)` calls where the
+                // concrete callee name is not monomorphized.
+                if let Some((_, method_name)) = name.split_once("::") {
+                    if let Some(Ty::Struct(_)) = registry
+                        .get(name)
+                        .and_then(|sig| sig.params.get(0).cloned())
+                    {
+                        let entry = generic_struct_ext
+                            .entry(method_name.to_string())
+                            .or_default();
+                        if !entry.contains(name) {
+                            entry.push(name.clone());
+                        }
+                    }
+                }
             }
             AstNode::Function {
                 name,
@@ -4613,6 +4691,74 @@ fn check_expr(
 
             Some(Ty::Array(Box::new(elem_ty)))
         }
+        AstNode::DictLiteral { entries, span } => {
+            if entries.is_empty() {
+                errors.push(SemanticError::new(
+                    "cannot infer type of empty dict literal",
+                    *span,
+                ));
+                return None;
+            }
+
+            let mut key_ty: Option<Ty> = None;
+            let mut val_ty: Option<Ty> = None;
+
+            for (k, v) in entries {
+                let got_k = check_expr(k, ctx, errors)?;
+                let got_v = check_expr(v, ctx, errors)?;
+
+                match &key_ty {
+                    None => key_ty = Some(got_k),
+                    Some(prev) if type_matches_with_any_wildcards(prev, &got_k) => {}
+                    Some(prev) => {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "dict literal keys must have the same type (expected `{}`, found `{}`)",
+                                ty_name(prev),
+                                ty_name(&got_k)
+                            ),
+                            expr_span(k),
+                        ));
+                        return None;
+                    }
+                }
+
+                match &val_ty {
+                    None => val_ty = Some(got_v),
+                    Some(prev) if type_matches_with_any_wildcards(prev, &got_v) => {}
+                    Some(prev) => {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "dict literal values must have the same type (expected `{}`, found `{}`)",
+                                ty_name(prev),
+                                ty_name(&got_v)
+                            ),
+                            expr_span(v),
+                        ));
+                        return None;
+                    }
+                }
+            }
+
+            let key_ty = key_ty.expect("entries non-empty implies inferred key type");
+            let val_ty = val_ty.expect("entries non-empty implies inferred value type");
+
+            // Ensure `Dict` is declared.
+            if ctx.structs.get("Dict").is_none() {
+                errors.push(SemanticError::new(
+                    "unknown struct `Dict`".to_string(),
+                    *span,
+                ));
+                return None;
+            }
+
+            let inst_name = format!(
+                "Dict<{}, {}>",
+                ty_name(&key_ty),
+                ty_name(&val_ty)
+            );
+            Some(Ty::Struct(inst_name))
+        }
         AstNode::ArrayIndex { base, index, span } => {
             let base_ty = check_expr(base, ctx, errors)?;
             let idx_ty = check_expr(index, ctx, errors)?;
@@ -5370,20 +5516,44 @@ fn check_expr(
                     }
                 }
                 UnaryOp::Plus | UnaryOp::Minus => {
-                    if t.as_ref().is_some_and(|tt| {
-                        infer::unify_types(tt, &Ty::Int, &mut ctx.infer_ctx, errors, *span)
-                    }) {
-                        Some(Ty::Int)
-                    } else if t.as_ref().is_some_and(|tt| {
-                        infer::unify_types(tt, &Ty::Float, &mut ctx.infer_ctx, errors, *span)
-                    }) {
-                        Some(Ty::Float)
-                    } else {
-                        errors.push(SemanticError::new(
-                            "unary `+` and `-` require an `Int` or `Float` operand",
-                            *span,
-                        ));
-                        None
+                    match t.as_ref() {
+                        // Avoid spurious "type mismatch expected X found Y" errors:
+                        // if the operand already resolved to Float, don't try to unify it
+                        // against Int first.
+                        Some(Ty::Int) => Some(Ty::Int),
+                        Some(Ty::Float) => Some(Ty::Float),
+                        Some(Ty::InferVar(_)) => {
+                            if infer::unify_types(
+                                t.as_ref().unwrap(),
+                                &Ty::Int,
+                                &mut ctx.infer_ctx,
+                                errors,
+                                *span,
+                            ) {
+                                Some(Ty::Int)
+                            } else if infer::unify_types(
+                                t.as_ref().unwrap(),
+                                &Ty::Float,
+                                &mut ctx.infer_ctx,
+                                errors,
+                                *span,
+                            ) {
+                                Some(Ty::Float)
+                            } else {
+                                errors.push(SemanticError::new(
+                                    "unary `+` and `-` require an `Int` or `Float` operand",
+                                    *span,
+                                ));
+                                None
+                            }
+                        }
+                        _ => {
+                            errors.push(SemanticError::new(
+                                "unary `+` and `-` require an `Int` or `Float` operand",
+                                *span,
+                            ));
+                            None
+                        }
                     }
                 }
             }
@@ -5658,15 +5828,115 @@ fn check_expr(
                             let mut substs = HashMap::new();
                             let mut probe_errors = Vec::new();
                             if let Some(s) = ctx.registry.get(g) {
-                                if infer::infer_generic_from_template(
-                                    &s.params[0],
-                                    &recv_ty,
-                                    &mut substs,
-                                    &mut probe_errors,
-                                    *span,
-                                ) && s.type_params.iter().all(|tp| substs.contains_key(&tp.name))
-                                    && probe_errors.is_empty()
-                                {
+                                // `infer_generic_from_template` doesn't understand
+                                // `Ty::Struct(...)` yet, so for struct-receiver templates we
+                                // infer generic type parameters by parsing the inst name,
+                                // e.g. `Dict<K, V>` vs `Dict<String, Float>`.
+                                let ok = match (&s.params[0], &recv_ty) {
+                                    (Ty::Struct(tmpl_inst), Ty::Struct(got_inst)) => {
+                                        let tmpl_base = struct_base_name(tmpl_inst);
+                                        let got_base = struct_base_name(got_inst);
+                                        if tmpl_base != got_base {
+                                            false
+                                        } else {
+                                            let parse_inst_args =
+                                                |inst: &str| -> Option<Vec<String>> {
+                                                    let (_, rest) = inst.split_once('<')?;
+                                                    let inner = rest.strip_suffix('>')?;
+                                                    let mut out = Vec::new();
+                                                    let mut buf = String::new();
+                                                    let mut depth = 0usize;
+                                                    for ch in inner.chars() {
+                                                        match ch {
+                                                            '<' => {
+                                                                depth += 1;
+                                                                buf.push(ch);
+                                                            }
+                                                            '>' => {
+                                                                depth = depth.saturating_sub(1);
+                                                                buf.push(ch);
+                                                            }
+                                                            ',' if depth == 0 => {
+                                                                let part = buf.trim();
+                                                                if !part.is_empty() {
+                                                                    out.push(part.to_string());
+                                                                }
+                                                                buf.clear();
+                                                            }
+                                                            _ => buf.push(ch),
+                                                        }
+                                                    }
+                                                    let part = buf.trim();
+                                                    if !part.is_empty() {
+                                                        out.push(part.to_string());
+                                                    }
+                                                    Some(out)
+                                                };
+
+                                            if let (Some(tmpl_args), Some(got_args)) =
+                                                (parse_inst_args(tmpl_inst),
+                                                 parse_inst_args(got_inst))
+                                            {
+                                                if tmpl_args.len() != got_args.len() {
+                                                    false
+                                                } else {
+                                                    let mut ok = true;
+                                                    for (tmpl_arg, got_arg) in
+                                                        tmpl_args.iter().zip(got_args.iter())
+                                                    {
+                                                        let tmpl_arg_str = tmpl_arg.as_str();
+                                                        if let Some(tp) = s
+                                                            .type_params
+                                                            .iter()
+                                                            .find(|tp| tp.name == tmpl_arg_str)
+                                                        {
+                                                            let te = match crate::parser::Parser
+                                                                ::parse_type_expr_from_source(
+                                                                    got_arg,
+                                                                )
+                                                            {
+                                                                Ok(te) => te,
+                                                                Err(_) => {
+                                                                    ok = false;
+                                                                    break;
+                                                                }
+                                                            };
+
+                                                            let inferred_ty = ty_from_type_expr(
+                                                                &te,
+                                                                *span,
+                                                                &mut probe_errors,
+                                                                &[],
+                                                                &ctx.structs,
+                                                                &ctx.enums,
+                                                                ctx.aliases,
+                                                            );
+                                                            if inferred_ty.is_none() {
+                                                                ok = false;
+                                                                break;
+                                                            }
+                                                            substs.insert(
+                                                                tp.name.clone(),
+                                                                inferred_ty.unwrap(),
+                                                            );
+                                                        }
+                                                    }
+
+                                                    ok
+                                                        && s.type_params
+                                                            .iter()
+                                                            .all(|tp| substs.contains_key(&tp.name))
+                                                        && probe_errors.is_empty()
+                                                }
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                    }
+                                    _ => false,
+                                };
+
+                                if ok {
                                     callee = g.clone();
                                     sig = Some(s);
                                     break;
@@ -5689,7 +5959,117 @@ fn check_expr(
                 sig.params[0] == recv_ty
             } else {
                 let mut substs = HashMap::new();
-                infer::infer_generic_from_template(&sig.params[0], &recv_ty, &mut substs, errors, *span)
+                let mut probe_errors = Vec::new();
+
+                // `infer_generic_from_template` doesn't support `Ty::Struct(...)` templates.
+                // For struct-receiver extensions, infer by parsing the inst name strings,
+                // e.g. `Dict<K, V>` vs `Dict<String, Float>`.
+                let ok = match (&sig.params[0], &recv_ty) {
+                    (Ty::Struct(tmpl_inst), Ty::Struct(got_inst)) => {
+                        let tmpl_base = struct_base_name(tmpl_inst);
+                        let got_base = struct_base_name(got_inst);
+                        if tmpl_base != got_base {
+                            false
+                        } else {
+                            let parse_inst_args = |inst: &str| -> Option<Vec<String>> {
+                                let Some((_, rest)) = inst.split_once('<')
+                                else {
+                                    return Some(Vec::new());
+                                };
+                                let inner = rest.strip_suffix('>')?;
+                                let mut out = Vec::new();
+                                let mut buf = String::new();
+                                let mut depth = 0usize;
+                                for ch in inner.chars() {
+                                    match ch {
+                                        '<' => {
+                                            depth += 1;
+                                            buf.push(ch);
+                                        }
+                                        '>' => {
+                                            depth = depth.saturating_sub(1);
+                                            buf.push(ch);
+                                        }
+                                        ',' if depth == 0 => {
+                                            let part = buf.trim();
+                                            if !part.is_empty() {
+                                                out.push(part.to_string());
+                                            }
+                                            buf.clear();
+                                        }
+                                        _ => buf.push(ch),
+                                    }
+                                }
+                                let part = buf.trim();
+                                if !part.is_empty() {
+                                    out.push(part.to_string());
+                                }
+                                Some(out)
+                            };
+
+                            if let (Some(tmpl_args), Some(got_args)) =
+                                (parse_inst_args(tmpl_inst), parse_inst_args(got_inst))
+                            {
+                                if tmpl_args.len() != got_args.len() {
+                                    false
+                                } else {
+                                    let mut ok = true;
+                                    for (tmpl_arg, got_arg) in
+                                        tmpl_args.iter().zip(got_args.iter())
+                                    {
+                                        let tmpl_arg = tmpl_arg.as_str();
+                                        let Some(tp) = sig
+                                            .type_params
+                                            .iter()
+                                            .find(|tp| tp.name == tmpl_arg)
+                                        else {
+                                            continue;
+                                        };
+
+                                    let te =
+                                        match crate::parser::Parser
+                                            ::parse_type_expr_from_source(got_arg)
+                                        {
+                                            Ok(te) => te,
+                                            Err(_) => {
+                                                ok = false;
+                                                break;
+                                            }
+                                        };
+
+                                    let inferred_ty = ty_from_type_expr(
+                                        &te,
+                                        *span,
+                                        &mut probe_errors,
+                                        &[],
+                                        &ctx.structs,
+                                        &ctx.enums,
+                                        ctx.aliases,
+                                    );
+                                    let Some(inferred_ty) = inferred_ty else {
+                                        ok = false;
+                                        break;
+                                    };
+                                        substs.insert(tp.name.clone(), inferred_ty);
+                                    }
+
+                                    ok && probe_errors.is_empty()
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                    }
+                    _ => infer::infer_generic_from_template(
+                        &sig.params[0],
+                        &recv_ty,
+                        &mut substs,
+                        &mut probe_errors,
+                        *span,
+                    ) && probe_errors.is_empty(),
+                };
+
+                ok
             };
             if !is_instance_method {
                 // Convenience for unit structs: allow `None.foo()` as shorthand for `None::foo()`

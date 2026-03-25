@@ -1,0 +1,14 @@
+import { Option } from "core";
+
+export internal struct Dict<K, V>;
+
+export internal func Dict<type K, type V>::contains<K, V>(self, key: K): Bool;
+
+// inserts new value `V` for key `K`, returns old value `V`
+export internal func Dict<type K, type V>::insert<K, V>(self, key: K, value: V): Option<V>;
+
+// removes value `V` for key `K` if it is contains and returns removed value `V`
+export internal func Dict<type K, type V>::remove<K, V>(self, key: K): Option<V>;
+
+// returns value `V` for key `K`
+export internal func Dict<type K, type V>::get<K, V>(self, key: K): Option<V>;

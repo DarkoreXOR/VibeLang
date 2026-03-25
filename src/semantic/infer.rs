@@ -237,6 +237,59 @@ pub(crate) fn instantiate_ty(template: &Ty, substs: &HashMap<String, Ty>) -> Ty 
         },
         Ty::InferVar(id) => Ty::InferVar(*id),
         Ty::Task(inner) => Ty::Task(Box::new(instantiate_ty(inner, substs))),
+        Ty::Struct(name) => {
+            // `Ty::Struct` stores the full nominal instance name as a string, e.g. `Dict<K, V>`.
+            // For calls that infer type parameters from receiver types, we must also substitute
+            // these generic args inside the instance-name string.
+            let Some((base, rest)) = name.split_once('<') else {
+                return Ty::Struct(name.clone());
+            };
+            let inner = match rest.strip_suffix('>') {
+                Some(v) => v,
+                None => return Ty::Struct(name.clone()),
+            };
+
+            // Split on top-level commas (do not split inside nested `<...>`).
+            let mut args = Vec::<String>::new();
+            let mut buf = String::new();
+            let mut depth = 0usize;
+            for ch in inner.chars() {
+                match ch {
+                    '<' => {
+                        depth += 1;
+                        buf.push(ch);
+                    }
+                    '>' => {
+                        depth = depth.saturating_sub(1);
+                        buf.push(ch);
+                    }
+                    ',' if depth == 0 => {
+                        let part = buf.trim();
+                        if !part.is_empty() {
+                            args.push(part.to_string());
+                        }
+                        buf.clear();
+                    }
+                    _ => buf.push(ch),
+                }
+            }
+            let part = buf.trim();
+            if !part.is_empty() {
+                args.push(part.to_string());
+            }
+
+            // Substitute only direct type-parameter tokens (e.g. `K` -> `String`).
+            let mut subst_args = Vec::<String>::new();
+            for a in args {
+                if let Some(ty) = substs.get(a.trim()) {
+                    subst_args.push(ty_name(ty));
+                } else {
+                    subst_args.push(a.trim().to_string());
+                }
+            }
+
+            Ty::Struct(format!("{}<{}>", base.trim(), subst_args.join(", ")))
+        }
         other => other.clone(),
     }
 }
@@ -418,6 +471,202 @@ pub(crate) fn infer_generic_from_template(
                 errors,
                 span,
             ),
+            other => {
+                errors.push(SemanticError::new(
+                    format!(
+                        "argument type mismatch during generic inference (found `{}`, expected `{}`)",
+                        ty_name(other),
+                        ty_name(template)
+                    ),
+                    span,
+                ));
+                false
+            }
+        },
+        Ty::Struct(exp_inst) => match got {
+            Ty::Struct(got_inst) => {
+                // Best-effort inference for struct instance templates, based on inst-name
+                // strings such as `Dict<K, V>` vs `Dict<String, Float>`.
+                let exp_base = exp_inst
+                    .split_once('<')
+                    .map(|(b, _)| b)
+                    .unwrap_or(exp_inst.as_str());
+                let got_base = got_inst
+                    .split_once('<')
+                    .map(|(b, _)| b)
+                    .unwrap_or(got_inst.as_str());
+                if exp_base != got_base {
+                    errors.push(SemanticError::new(
+                        format!(
+                            "argument type mismatch during generic inference (found `{}`, expected `{}`)",
+                            ty_name(got),
+                            ty_name(template)
+                        ),
+                        span,
+                    ));
+                    return false;
+                }
+
+                let split_inst_args = |inst: &str| -> Option<Vec<String>> {
+                    let Some((_, rest)) = inst.split_once('<') else {
+                        return Some(vec![]);
+                    };
+                    let inner = rest.strip_suffix('>')?;
+                    let mut out = Vec::new();
+                    let mut buf = String::new();
+                    let mut depth = 0usize;
+                    for ch in inner.chars() {
+                        match ch {
+                            '<' => {
+                                depth += 1;
+                                buf.push(ch);
+                            }
+                            '>' => {
+                                depth = depth.saturating_sub(1);
+                                buf.push(ch);
+                            }
+                            ',' if depth == 0 => {
+                                let part = buf.trim();
+                                if !part.is_empty() {
+                                    out.push(part.to_string());
+                                }
+                                buf.clear();
+                            }
+                            _ => buf.push(ch),
+                        }
+                    }
+                    let part = buf.trim();
+                    if !part.is_empty() {
+                        out.push(part.to_string());
+                    }
+                    Some(out)
+                };
+
+                let exp_args = match split_inst_args(exp_inst) {
+                    Some(v) => v,
+                    None => {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "argument type mismatch during generic inference (found `{}`, expected `{}`)",
+                                ty_name(got),
+                                ty_name(template)
+                            ),
+                            span,
+                        ));
+                        return false;
+                    }
+                };
+                let got_args = match split_inst_args(got_inst) {
+                    Some(v) => v,
+                    None => {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "argument type mismatch during generic inference (found `{}`, expected `{}`)",
+                                ty_name(got),
+                                ty_name(template)
+                            ),
+                            span,
+                        ));
+                        return false;
+                    }
+                };
+
+                if exp_args.len() != got_args.len() {
+                    errors.push(SemanticError::new(
+                        format!(
+                            "argument type mismatch during generic inference (found `{}`, expected `{}`)",
+                            ty_name(got),
+                            ty_name(template)
+                        ),
+                        span,
+                    ));
+                    return false;
+                }
+
+                fn parse_ty_arg(arg: &str) -> Ty {
+                    let n = arg.trim();
+                    match n {
+                        "Int" => Ty::Int,
+                        "Float" => Ty::Float,
+                        "String" => Ty::String,
+                        "Bool" => Ty::Bool,
+                        "Any" => Ty::Any,
+                        "()" => Ty::Unit,
+                        _ => {
+                            if let Some((base, rest)) = n.split_once('<') {
+                                if let Some(inner) = rest.strip_suffix('>') {
+                                    // Split args at top-level commas.
+                                    let mut args = Vec::new();
+                                    let mut buf = String::new();
+                                    let mut depth = 0usize;
+                                    for ch in inner.chars() {
+                                        match ch {
+                                            '<' => {
+                                                depth += 1;
+                                                buf.push(ch);
+                                            }
+                                            '>' => {
+                                                depth = depth.saturating_sub(1);
+                                                buf.push(ch);
+                                            }
+                                            ',' if depth == 0 => {
+                                                let part = buf.trim();
+                                                if !part.is_empty() {
+                                                    args.push(part.to_string());
+                                                }
+                                                buf.clear();
+                                            }
+                                            _ => buf.push(ch),
+                                        }
+                                    }
+                                    let part = buf.trim();
+                                    if !part.is_empty() {
+                                        args.push(part.to_string());
+                                    }
+                                    if base == "Option" && args.len() == 1 {
+                                        return Ty::Enum {
+                                            name: "Option".to_string(),
+                                            args: vec![parse_ty_arg(&args[0])],
+                                        };
+                                    }
+                                    if base == "Result" && args.len() == 2 {
+                                        return Ty::Enum {
+                                            name: "Result".to_string(),
+                                            args: vec![
+                                                parse_ty_arg(&args[0]),
+                                                parse_ty_arg(&args[1]),
+                                            ],
+                                        };
+                                    }
+                                }
+                            }
+                            Ty::Struct(n.to_string())
+                        }
+                    }
+                }
+
+                for (exp_arg, got_arg) in exp_args.iter().zip(got_args.iter()) {
+                    let got_ty = parse_ty_arg(got_arg);
+                    if let Some(prev) = substs.get(exp_arg.as_str()) {
+                        if prev != &got_ty {
+                            errors.push(SemanticError::new(
+                                format!(
+                                    "inconsistent type inference for generic parameter `{}` (expected `{}`, found `{}`)",
+                                    exp_arg,
+                                    ty_name(prev),
+                                    ty_name(&got_ty)
+                                ),
+                                span,
+                            ));
+                            return false;
+                        }
+                    } else {
+                        substs.insert(exp_arg.clone(), got_ty);
+                    }
+                }
+
+                true
+            }
             other => {
                 errors.push(SemanticError::new(
                     format!(

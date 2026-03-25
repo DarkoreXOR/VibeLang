@@ -1,9 +1,9 @@
-export enum Option<T> {
+internal export enum Option<T> {
     None,
     Some(T),
 }
 
-export enum Result<T, E> {
+internal export enum Result<T, E> {
     Ok(T),
     Err(E),
 }

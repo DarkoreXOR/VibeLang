@@ -973,6 +973,38 @@ impl Parser {
     fn parse_internal_declaration(&mut self) -> Result<AstNode, ParseError> {
         self.advance(); // `internal`
         match self.peek().kind.clone() {
+            TokenKind::Export => {
+                // Support `internal export enum ...` (used for internal core enums like
+                // `Option` / `Result`).
+                self.advance(); // `export`
+                match self.peek().kind.clone() {
+                    TokenKind::Enum => {
+                        let mut e = self.parse_enum_definition()?;
+                        if let AstNode::EnumDef { is_exported, .. } = &mut e {
+                            *is_exported = true;
+                        }
+                        Ok(e)
+                    }
+                    TokenKind::Struct => {
+                        let mut s = self.parse_struct_definition(true)?;
+                        if let AstNode::StructDef { is_exported, .. } = &mut s {
+                            *is_exported = true;
+                        }
+                        Ok(s)
+                    }
+                    TokenKind::Type => {
+                        let mut t = self.parse_type_alias_definition()?;
+                        if let AstNode::TypeAlias { is_exported, .. } = &mut t {
+                            *is_exported = true;
+                        }
+                        Ok(t)
+                    }
+                    _ => Err(ParseError::UnexpectedToken {
+                        message: "expected `enum`, `struct`, or `type` after `internal export`".to_string(),
+                        span: Some(self.peek().span),
+                    }),
+                }
+            }
             TokenKind::Struct => self.parse_struct_definition(true),
             TokenKind::Async => {
                 self.advance(); // `async`
@@ -1392,6 +1424,49 @@ impl Parser {
                 }
             }
         }
+        // Support extension-receiver internal functions:
+        //   internal func <ReceiverType>::<method><T...>(self, ...): Ret;
+        let checkpoint = self.position;
+        if let Ok(receiver_ty) = self.parse_type_expr() {
+            if matches!(self.peek().kind, TokenKind::ColonColon) {
+                self.advance(); // `::`
+                let (method_name, method_name_span) = self.take_identifier()?;
+                let type_params = self.parse_optional_type_param_list()?;
+                self.expect_lparen()?;
+                let params = self.parse_parameter_list(Some(&receiver_ty))?;
+                self.expect_rparen()?;
+                if params.iter().any(|p| p.default_value.is_some()) {
+                    return Err(ParseError::UnexpectedToken {
+                        message: "internal functions cannot have parameters with default values".to_string(),
+                        span: Some(method_name_span),
+                    });
+                }
+                let return_type = self.parse_optional_return_type_expr()?;
+                self.expect_semicolon()?;
+
+                let Some(receiver_key) = Self::type_expr_receiver_key(&receiver_ty) else {
+                    return Err(ParseError::UnexpectedToken {
+                        message: "extension receiver type must be concrete".to_string(),
+                        span: Some(method_name_span),
+                    });
+                };
+
+                let name = format!("{}::{}", receiver_key, method_name);
+                return Ok(AstNode::InternalFunction {
+                    name,
+                    type_params,
+                    params,
+                    return_type,
+                    name_span: method_name_span,
+                    is_exported: false,
+                    is_async,
+                });
+            }
+        }
+
+        // Fallback: regular internal function syntax.
+        self.position = checkpoint;
+
         let (name, name_span) = self.take_identifier()?;
         let type_params = self.parse_optional_type_param_list()?;
         self.expect_lparen()?;
@@ -2637,6 +2712,75 @@ impl Parser {
         let token = self.peek().clone();
         match token.kind {
             TokenKind::Match => self.parse_match_expression(),
+            TokenKind::LBrace => {
+                // Dict literal: `{ key: value, key2: value2, ... }`
+                // Used as an expression (e.g. `let d: Dict<K,V> = { ... };`).
+                let span = token.span;
+                self.advance(); // `{`
+
+                let mut entries: Vec<(AstNode, AstNode)> = Vec::new();
+                while matches!(
+                    self.peek().kind,
+                    TokenKind::SingleLineComment(_) | TokenKind::MultiLineComment(_)
+                ) {
+                    self.advance();
+                }
+
+                if matches!(self.peek().kind, TokenKind::RBrace) {
+                    self.advance();
+                    return Ok(AstNode::DictLiteral { entries, span });
+                }
+
+                loop {
+                    while matches!(
+                        self.peek().kind,
+                        TokenKind::SingleLineComment(_) | TokenKind::MultiLineComment(_)
+                    ) {
+                        self.advance();
+                    }
+
+                    let key = self.parse_expression()?;
+                    self.expect_colon()?;
+                    let value = self.parse_expression()?;
+                    entries.push((key, value));
+
+                    while matches!(
+                        self.peek().kind,
+                        TokenKind::SingleLineComment(_) | TokenKind::MultiLineComment(_)
+                    ) {
+                        self.advance();
+                    }
+
+                    match self.peek().kind {
+                        TokenKind::Comma => {
+                            self.advance();
+                            while matches!(
+                                self.peek().kind,
+                                TokenKind::SingleLineComment(_) | TokenKind::MultiLineComment(_)
+                            ) {
+                                self.advance();
+                            }
+                            if matches!(self.peek().kind, TokenKind::RBrace) {
+                                self.advance();
+                                break;
+                            }
+                            continue;
+                        }
+                        TokenKind::RBrace => {
+                            self.advance();
+                            break;
+                        }
+                        _ => {
+                            return Err(ParseError::UnexpectedToken {
+                                message: "expected `,` or `}` in dict literal".to_string(),
+                                span: Some(self.peek().span),
+                            })
+                        }
+                    }
+                }
+
+                Ok(AstNode::DictLiteral { entries, span })
+            }
             TokenKind::StringLiteral { value, original } => {
                 let span = token.span;
                 self.advance();

@@ -261,6 +261,11 @@ pub enum AstNode {
         elements: Vec<AstNode>,
         span: Span,
     },
+    /// Dict/map literal: `{ key: value, key2: value2, ... }`.
+    DictLiteral {
+        entries: Vec<(AstNode, AstNode)>,
+        span: Span,
+    },
     /// `expr.0`, `expr.0.1` — one segment per node (left-associative chain in parser).
     TupleField {
         base: Box<AstNode>,

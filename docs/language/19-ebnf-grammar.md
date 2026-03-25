@@ -76,8 +76,8 @@ TypeAliasDef          = "type" Identifier TypeParamsOpt "=" TypeExpr ";" ;
 InternalDecl          = "internal" ( InternalStructDef | InternalFuncDecl | InternalAsyncFuncDecl ) ;
 InternalStructDef     = "struct" Identifier TypeParamsOpt ";" ;
 
-InternalFuncDecl      = "func" Identifier TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt ";" ;
-InternalAsyncFuncDecl = "async" "func" Identifier TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt ";" ;
+InternalFuncDecl      = "func" FuncNameWithExtReceiver TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt ";" ;
+InternalAsyncFuncDecl = "async" "func" FuncNameWithExtReceiver TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt ";" ;
 
 (* -------- Functions / async functions -------- *)
 FuncDef               = "func" FuncNameWithExtReceiver TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt FuncBody ;
@@ -201,6 +201,7 @@ PrimaryExpr         = "match" Expr "{" MatchArm { "," MatchArm } [ "," ] "}"
                       | "[" "]"                          (* empty array literal *)
                       | "[" Expr { "," Expr } [ "," ] "]" (* array literal *)
                       | StructLiteral
+                      | DictLiteral
                       | UnitStructTypeValue ;
 
 (* Calls, enum constructors, struct literals, unit-struct type values.
@@ -215,6 +216,10 @@ GenericCallOrValueTailOpt
 StructLiteral        = Identifier [ TypeArgsOpt ] "{" StructFieldInitListOpt [ "," ".." Expr ] "}" ;
 StructFieldInitListOpt = [ StructFieldInit { "," StructFieldInit } [ "," ] ] ;
 StructFieldInit      = Identifier ":" Expr ;
+
+(* Dict literal: `{ key: value, ... }` *)
+DictLiteral          = "{" [ DictEntry { "," DictEntry } [ "," ] ] "}" ;
+DictEntry            = Expr ":" Expr ;
 
 UnitStructTypeValue = Identifier TypeArgsOpt ;  (* parsed as a type-value expression *)
 

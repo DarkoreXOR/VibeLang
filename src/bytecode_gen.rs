@@ -358,6 +358,18 @@ impl<'a> FnGen<'a> {
                 let elem = self.infer_receiver_ty_key(&elements[0])?;
                 Some(TyKey::Array(Box::new(elem)))
             }
+            AstNode::DictLiteral { entries, .. } => {
+                if entries.is_empty() {
+                    return None;
+                }
+                let (k0, v0) = &entries[0];
+                let key_ty = self.infer_receiver_ty_key(k0)?;
+                let val_ty = self.infer_receiver_ty_key(v0)?;
+                Some(TyKey::EnumApp {
+                    name: "Dict".to_string(),
+                    args: vec![key_ty, val_ty],
+                })
+            }
             AstNode::Identifier { name, .. } => self
                 .local_type_keys
                 .iter()
@@ -1063,6 +1075,25 @@ impl<'a> FnGen<'a> {
                     self.compile_expr(e)?;
                 }
                 self.emit(Instr::MakeArray { count: elements.len() });
+                Ok(())
+            }
+            AstNode::DictLiteral { entries, span } => {
+                // Encode runtime dict as a struct with a single `entries` field:
+                //   Dict { entries: [(key, value), ...] }
+                // We store each entry as a 2-tuple and wrap the array in `entries`.
+                for (k, v) in entries {
+                    self.compile_expr(k)?;
+                    self.compile_expr(v)?;
+                    self.emit(Instr::MakeTuple { count: 2 });
+                }
+                self.emit(Instr::MakeArray { count: entries.len() });
+                self.emit(Instr::MakeStructLiteral {
+                    name: "Dict".to_string(),
+                    is_unit_literal: false,
+                    field_names: vec!["entries".to_string()],
+                    has_update: false,
+                    span: *span,
+                });
                 Ok(())
             }
             AstNode::ArrayIndex { base, index, span } => {
@@ -2232,7 +2263,7 @@ pub fn compile_program_with_builtins(
         match item {
             AstNode::InternalFunction {
                 name,
-                type_params: _,
+                type_params,
                 params,
                 return_type,
                 name_span,
@@ -2267,6 +2298,48 @@ pub fn compile_program_with_builtins(
                         .collect(),
                 );
                 call_returns.insert(name.clone(), return_type.clone());
+
+                // Generic extension dispatch metadata:
+                // internal functions can also be declared as extension receivers, and method-call
+                // lowering needs those candidates for non-monomorphized call sites.
+                if let Some((_, method_name)) = name.split_once("::") {
+                    if let Some(first_param) = params.first() {
+                        if first_param.name == "self" {
+                            let recv_ty = &first_param.ty;
+                            let is_generic_recv = match recv_ty {
+                                TypeExpr::EnumApp { args, .. } => {
+                                    args.iter().all(|a| matches!(a, TypeExpr::TypeParam(_)))
+                                }
+                                _ => false,
+                            };
+                            if is_generic_recv {
+                                if let Some(tk) = type_expr_to_ty_key(recv_ty) {
+                                    extension_match_info.insert(
+                                        name.clone(),
+                                        (tk, GenericParam::names(type_params)),
+                                    );
+                                }
+                                let entry =
+                                    generic_enum_ext.entry(method_name.to_string()).or_default();
+                                if !entry.contains(name) {
+                                    entry.insert(0, name.clone());
+                                }
+                            }
+                            // If the receiver base is a concrete struct name, also register for
+                            // the `TyKey::Ident` dispatch path.
+                            if let TypeExpr::EnumApp { name: recv_base, .. } = recv_ty {
+                                if struct_names.contains(recv_base) {
+                                    let entry = generic_struct_ext
+                                        .entry(method_name.to_string())
+                                        .or_default();
+                                    if !entry.contains(name) {
+                                        entry.push(name.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             AstNode::Function {
                 name,

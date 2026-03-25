@@ -197,6 +197,18 @@ impl Visit for PrettyPrinter {
                 }
                 self.indent -= 1;
             }
+            AstNode::DictLiteral { entries, .. } => {
+                self.line("DictLiteral");
+                self.indent += 1;
+                for (k, v) in entries {
+                    self.line("Entry");
+                    self.indent += 1;
+                    self.visit_ast_node(k);
+                    self.visit_ast_node(v);
+                    self.indent -= 1;
+                }
+                self.indent -= 1;
+            }
             AstNode::ArrayIndex { base, index, .. } => {
                 self.line("ArrayIndex");
                 self.indent += 1;
