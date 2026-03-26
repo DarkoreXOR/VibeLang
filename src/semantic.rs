@@ -69,7 +69,6 @@ struct StructDef {
     type_params: Vec<GenericParam>,
     fields: HashMap<String, Ty>,
     is_unit: bool,
-    is_internal: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -593,25 +592,18 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
     let mut generic_enum_ext: HashMap<String, Vec<String>> = HashMap::new();
     let mut generic_struct_ext: HashMap<String, Vec<String>> = HashMap::new();
     let mut defined_names: HashMap<String, Span> = HashMap::new();
+    let mut function_registry_name: HashMap<(String, usize, usize), String> = HashMap::new();
     let mut global_order: Vec<GlobalDecl> = Vec::new();
 
     // Collect struct declarations first so type expressions can reference them.
-    let mut structs_ast: HashMap<
-        String,
-        (
-            Vec<GenericParam>,
-            Vec<crate::ast::StructFieldDecl>,
-            bool,
-            bool,
-        ),
-    > = HashMap::new();
+    let mut structs_ast: HashMap<String, (Vec<GenericParam>, Vec<crate::ast::StructFieldDecl>, bool)> =
+        HashMap::new();
     for item in items {
         if let AstNode::StructDef {
             name,
             type_params,
             fields,
             is_unit,
-            is_internal,
             ..
         } = item
         {
@@ -621,7 +613,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
             }
             structs_ast.insert(
                 name.clone(),
-                (type_params.clone(), fields.clone(), *is_unit, *is_internal),
+                (type_params.clone(), fields.clone(), *is_unit),
             );
         }
     }
@@ -685,14 +677,13 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
 
     // Pre-create empty entries so `ty_from_type_expr` can resolve struct names.
     let mut structs: HashMap<String, StructDef> = HashMap::new();
-    for (name, (type_params, _fields, is_unit, is_internal)) in &structs_ast {
+    for (name, (type_params, _fields, is_unit)) in &structs_ast {
         structs.insert(
             name.clone(),
             StructDef {
                 type_params: type_params.clone(),
                 fields: HashMap::new(),
                 is_unit: *is_unit,
-                is_internal: *is_internal,
             },
         );
     }
@@ -710,7 +701,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
     }
 
     // Now fill in each struct's field types.
-    for (name, (type_params, fields, is_unit, is_internal)) in &structs_ast {
+    for (name, (type_params, fields, is_unit)) in &structs_ast {
         let mut field_tys: HashMap<String, Ty> = HashMap::new();
         for f in fields {
             if field_tys.contains_key(&f.name) {
@@ -739,7 +730,6 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                 type_params: type_params.clone(),
                 fields: field_tys,
                 is_unit: *is_unit,
-                is_internal: *is_internal,
             },
         );
     }
@@ -840,14 +830,17 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                 is_async,
                 ..
             } => {
-                if defined_names.contains_key(name) {
+                let is_op_overload = is_operator_method_name(name);
+                if defined_names.contains_key(name) && !is_op_overload {
                     errors.push(SemanticError::new(
                         format!("redefinition of `{name}`"),
                         *name_span,
                     ));
                     continue;
                 }
-                defined_names.insert(name.clone(), *name_span);
+                if !defined_names.contains_key(name) {
+                    defined_names.insert(name.clone(), *name_span);
+                }
                 let param_tys = check_param_list(
                     params,
                     type_params,
@@ -1082,8 +1075,17 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                         &aliases,
                     )
                 });
+                let reg_name = if is_op_overload {
+                    mangle_operator_overload_name(name, &param_tys)
+                } else {
+                    name.clone()
+                };
+                function_registry_name.insert(
+                    (name.clone(), name_span.line, name_span.column),
+                    reg_name.clone(),
+                );
                 registry.insert(
-                    name.clone(),
+                    reg_name,
                     FuncSig {
                         type_params: type_params.clone(),
                         params: param_tys,
@@ -1159,10 +1161,11 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
     //
     // We detect arrow functions by a single-statement body:
     // `return <expr>;`.
-    let mut arrow_candidates: Vec<(String, Vec<Param>, AstNode)> = Vec::new();
+    let mut arrow_candidates: Vec<(String, Span, Vec<Param>, AstNode)> = Vec::new();
     for item in items {
         if let AstNode::Function {
             name,
+            name_span,
             params,
             return_type: None,
             body,
@@ -1180,7 +1183,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                 .collect();
             if non_comment.len() == 1 {
                 if let AstNode::Return { value: Some(v), .. } = non_comment[0] {
-                    arrow_candidates.push((name.clone(), params.clone(), (*v.clone())));
+                    arrow_candidates.push((name.clone(), *name_span, params.clone(), (*v.clone())));
                 }
             }
         }
@@ -1194,9 +1197,13 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
             break;
         }
         changed = false;
-        for (name, params_ast, ret_expr) in &arrow_candidates {
+        for (name, name_span, params_ast, ret_expr) in &arrow_candidates {
+            let reg_name = function_registry_name
+                .get(&(name.clone(), name_span.line, name_span.column))
+                .cloned()
+                .unwrap_or_else(|| name.clone());
             let sig_ret_is_none = registry
-                .get(name)
+                .get(&reg_name)
                 .and_then(|s| s.ret.as_ref())
                 .is_none();
             if !sig_ret_is_none {
@@ -1215,7 +1222,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                     &generic_struct_ext,
                 );
                 ctx.push_scope();
-                match registry.get(name) {
+                match registry.get(&reg_name) {
                     Some(sig) => {
                         for (p, ty) in params_ast.iter().zip(sig.params.iter()) {
                             ctx.declare_param(p, ty.clone(), &mut errors);
@@ -1228,7 +1235,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
             };
 
             if let Some(inferred_ty) = inferred_ty {
-                if let Some(sig_mut) = registry.get_mut(name) {
+                if let Some(sig_mut) = registry.get_mut(&reg_name) {
                     // For `main`, a non-unit return type will be rejected later,
                     // but we still set it here so call sites can type-check.
                     let final_ty = if name == "main" && inferred_ty == Ty::Unit {
@@ -1260,7 +1267,11 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
         else {
             continue;
         };
-        let Some(sig) = registry.get(name) else {
+        let reg_name = function_registry_name
+            .get(&(name.clone(), name_span.line, name_span.column))
+            .cloned()
+            .unwrap_or_else(|| name.clone());
+        let Some(sig) = registry.get(&reg_name) else {
             continue;
         };
         let ret_ty = sig.ret.clone();
@@ -1633,7 +1644,7 @@ fn ty_from_type_expr(
             _ if type_params.iter().any(|tp| tp.name == *n) => Some(Ty::TypeParam(n.clone())),
             _ if structs.contains_key(n) => {
                 let sd = structs.get(n).expect("checked contains_key");
-                if sd.is_internal && n == "Task" {
+                if n == "Task" {
                     let merged = merge_type_args_with_defaults(&sd.type_params, &[], span, errors)?;
                     if merged.len() != 1 {
                         errors.push(SemanticError::new(
@@ -1673,6 +1684,30 @@ fn ty_from_type_expr(
                     }
                     Some(Ty::Struct(struct_inst_name(n, &arg_tys)))
                 }
+            }
+            _ if enums.contains_key(n) => {
+                // Non-generic enum type usage parses as `TypeExpr::Named`.
+                // Resolve it into `Ty::Enum` with zero type arguments (using defaults if any).
+                let def = enums.get(n).expect("checked contains_key");
+                let merged =
+                    merge_type_args_with_defaults(&def.type_params, &[], span, errors)?;
+                let mut arg_tys = Vec::with_capacity(merged.len());
+                for a in &merged {
+                    arg_tys.push(inner(
+                        a,
+                        span,
+                        errors,
+                        type_params,
+                        structs,
+                        enums,
+                        aliases,
+                        alias_stack,
+                    )?);
+                }
+                Some(Ty::Enum {
+                    name: n.clone(),
+                    args: arg_tys,
+                })
             }
             _ if aliases.contains_key(n) => {
                 let ad = aliases.get(n).expect("checked contains_key");
@@ -1769,7 +1804,7 @@ fn ty_from_type_expr(
                     args: arg_tys,
                 })
             } else if let Some(sd) = structs.get(name) {
-                if sd.is_internal && name == "Task" {
+                if name == "Task" {
                     let Some(full_args) =
                         merge_type_args_with_defaults(&sd.type_params, args, span, errors)
                     else {
@@ -2746,6 +2781,18 @@ fn check_compound_assign(
     ctx: &mut BodyCtx<'_>,
     errors: &mut Vec<SemanticError>,
 ) {
+    let method = match op {
+        CompoundOp::Add => Some("binary_add"),
+        CompoundOp::Sub => Some("binary_sub"),
+        CompoundOp::Mul => Some("binary_mul"),
+        CompoundOp::Div => Some("binary_div"),
+        CompoundOp::Mod => Some("binary_mod"),
+        CompoundOp::BitAnd => Some("binary_bitwise_and"),
+        CompoundOp::BitXor => Some("binary_bitwise_xor"),
+        CompoundOp::BitOr => Some("binary_bitwise_or"),
+        CompoundOp::ShiftLeft => Some("binary_left_shift"),
+        CompoundOp::ShiftRight => Some("binary_right_shift"),
+    };
     match lhs {
         AstNode::TupleField { span, .. } => {
             errors.push(SemanticError::new(
@@ -2759,11 +2806,21 @@ fn check_compound_assign(
             let lt = check_expr(lhs, ctx, errors).map(|t| infer::resolve_ty(&t, &ctx.infer_ctx));
             let rt = check_expr(rhs, ctx, errors).map(|t| infer::resolve_ty(&t, &ctx.infer_ctx));
             let arith_allows_float = matches!(op, CompoundOp::Add | CompoundOp::Sub | CompoundOp::Mul | CompoundOp::Div | CompoundOp::Mod);
+            let method = method.expect("all compound ops mapped");
 
             // Avoid spurious type-mismatch errors by only attempting unification
             // when operand types are compatible with the target.
             match (&lt, &rt) {
                 (Some(Ty::Int), Some(Ty::Int)) => {
+                    if !ctx.registry.contains_key(&format!("Int::{method}")) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "operator is not available: missing `internal func Int::{method}(...)`"
+                            ),
+                            *span,
+                        ));
+                        return;
+                    }
                     assign_pattern_types(
                         &Pattern::Binding {
                             name: name.clone(),
@@ -2777,6 +2834,15 @@ fn check_compound_assign(
                 }
                 (Some(l), Some(r))
                     if matches!(l, Ty::InferVar(_)) && matches!(r, Ty::Int) => {
+                    if !ctx.registry.contains_key(&format!("Int::{method}")) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "operator is not available: missing `internal func Int::{method}(...)`"
+                            ),
+                            *span,
+                        ));
+                        return;
+                    }
                     let _ = infer::unify_types(
                         l,
                         &Ty::Int,
@@ -2803,6 +2869,15 @@ fn check_compound_assign(
                 }
                 (Some(l), Some(r))
                     if matches!(l, Ty::Int) && matches!(r, Ty::InferVar(_)) => {
+                    if !ctx.registry.contains_key(&format!("Int::{method}")) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "operator is not available: missing `internal func Int::{method}(...)`"
+                            ),
+                            *span,
+                        ));
+                        return;
+                    }
                     let _ = infer::unify_types(
                         l,
                         &Ty::Int,
@@ -2829,31 +2904,72 @@ fn check_compound_assign(
                 }
                 (Some(l), Some(r)) if matches!(l, Ty::InferVar(_)) && matches!(r, Ty::InferVar(_)) => {
                     // Arbitrary default for fully-inferred arithmetic.
-                    let _ = infer::unify_types(
-                        l,
-                        &Ty::Int,
-                        &mut ctx.infer_ctx,
-                        errors,
-                        *span,
-                    ) && infer::unify_types(
-                        r,
-                        &Ty::Int,
-                        &mut ctx.infer_ctx,
-                        errors,
-                        *span,
-                    );
-                    assign_pattern_types(
-                        &Pattern::Binding {
-                            name: name.clone(),
-                            name_span: *span,
-                        },
-                        &Ty::Int,
-                        rhs,
-                        ctx,
-                        errors,
-                    );
+                    if ctx.registry.contains_key(&format!("Int::{method}")) {
+                        let _ = infer::unify_types(
+                            l,
+                            &Ty::Int,
+                            &mut ctx.infer_ctx,
+                            errors,
+                            *span,
+                        ) && infer::unify_types(
+                            r,
+                            &Ty::Int,
+                            &mut ctx.infer_ctx,
+                            errors,
+                            *span,
+                        );
+                        assign_pattern_types(
+                            &Pattern::Binding {
+                                name: name.clone(),
+                                name_span: *span,
+                            },
+                            &Ty::Int,
+                            rhs,
+                            ctx,
+                            errors,
+                        );
+                    } else if arith_allows_float && ctx.registry.contains_key(&format!("Float::{method}")) {
+                        let _ = infer::unify_types(
+                            l,
+                            &Ty::Float,
+                            &mut ctx.infer_ctx,
+                            errors,
+                            *span,
+                        ) && infer::unify_types(
+                            r,
+                            &Ty::Float,
+                            &mut ctx.infer_ctx,
+                            errors,
+                            *span,
+                        );
+                        assign_pattern_types(
+                            &Pattern::Binding {
+                                name: name.clone(),
+                                name_span: *span,
+                            },
+                            &Ty::Float,
+                            rhs,
+                            ctx,
+                            errors,
+                        );
+                    } else {
+                        errors.push(SemanticError::new(
+                            "operator is not available: missing required `internal func` operator implementation",
+                            *span,
+                        ));
+                        return;
+                    }
                 }
                 (Some(Ty::Float), Some(Ty::Float)) if arith_allows_float => {
+                    if !ctx.registry.contains_key(&format!("Float::{method}")) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "operator is not available: missing `internal func Float::{method}(...)`"
+                            ),
+                            *span,
+                        ));
+                        return;
+                    }
                     assign_pattern_types(
                         &Pattern::Binding {
                             name: name.clone(),
@@ -2869,6 +2985,15 @@ fn check_compound_assign(
                     if arith_allows_float
                         && matches!(l, Ty::InferVar(_))
                         && matches!(r, Ty::Float) => {
+                    if !ctx.registry.contains_key(&format!("Float::{method}")) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "operator is not available: missing `internal func Float::{method}(...)`"
+                            ),
+                            *span,
+                        ));
+                        return;
+                    }
                     let _ = infer::unify_types(
                         l,
                         &Ty::Float,
@@ -2897,6 +3022,15 @@ fn check_compound_assign(
                     if arith_allows_float
                         && matches!(l, Ty::Float)
                         && matches!(r, Ty::InferVar(_)) => {
+                    if !ctx.registry.contains_key(&format!("Float::{method}")) {
+                        errors.push(SemanticError::new(
+                            format!(
+                                "operator is not available: missing `internal func Float::{method}(...)`"
+                            ),
+                            *span,
+                        ));
+                        return;
+                    }
                     let _ = infer::unify_types(
                         l,
                         &Ty::Float,
@@ -5267,15 +5401,147 @@ fn check_expr(
             let mut rt = check_expr(right, ctx, errors);
             lt = lt.map(|t| infer::resolve_ty(&t, &ctx.infer_ctx));
             rt = rt.map(|t| infer::resolve_ty(&t, &ctx.infer_ctx));
-            let mut unify_to = |target: Ty| -> bool {
-                let ok_l = lt.as_ref().is_some_and(|l| {
-                    infer::unify_types(l, &target, &mut ctx.infer_ctx, errors, *span)
-                });
-                let ok_r = rt.as_ref().is_some_and(|r| {
-                    infer::unify_types(r, &target, &mut ctx.infer_ctx, errors, *span)
-                });
-                ok_l && ok_r
+            fn op_key(recv: &Ty, method: &str) -> Option<String> {
+                let tyname = match recv {
+                    Ty::Int => "Int",
+                    Ty::Float => "Float",
+                    Ty::String => "String",
+                    Ty::Bool => "Bool",
+                    _ => return None,
+                };
+                Some(format!("{tyname}::{method}"))
+            }
+
+            fn push_missing_op(errors: &mut Vec<SemanticError>, span: Span, key: &str) {
+                errors.push(SemanticError::new(
+                    format!("operator is not available: missing `internal func {key}(...)`"),
+                    span,
+                ));
+            }
+
+            fn require_op(
+                registry: &HashMap<String, FuncSig>,
+                errors: &mut Vec<SemanticError>,
+                span: Span,
+                recv: &Ty,
+                method: &str,
+            ) -> bool {
+                let Some(key) = op_key(recv, method) else {
+                    return false;
+                };
+                if registry.contains_key(&key) {
+                    true
+                } else {
+                    push_missing_op(errors, span, &key);
+                    false
+                }
+            }
+
+            fn recv_custom_name(ty: &Ty) -> Option<String> {
+                match ty {
+                    Ty::Struct(n) => Some(struct_base_name(n).to_string()),
+                    Ty::Enum { name, .. } => Some(name.clone()),
+                    _ => None,
+                }
+            }
+
+            let mut resolve_custom_binary = |lhs_ty: &Ty, rhs_ty: &Ty, method: &str| -> Option<Ty> {
+                let recv = recv_custom_name(lhs_ty)?;
+                let base = format!("{recv}::{method}");
+                let mut candidates: Vec<(&String, &FuncSig)> = ctx
+                    .registry
+                    .iter()
+                    .filter(|(k, sig)| {
+                        (k.as_str() == base || k.starts_with(&(base.clone() + "#op(")))
+                            && sig.params.len() >= 2
+                    })
+                    .collect();
+                if candidates.is_empty() {
+                    errors.push(SemanticError::new(
+                        format!("operator is not available: missing overload `{base}(self, rhs)`"),
+                        *span,
+                    ));
+                    return None;
+                }
+                candidates.sort_by(|a, b| a.0.cmp(b.0));
+                let mut matches: Vec<&FuncSig> = Vec::new();
+                for (_k, sig) in candidates {
+                    let exp = &sig.params[1];
+                    let compatible = rhs_ty == exp
+                        || matches!(rhs_ty, Ty::InferVar(_))
+                        || matches!(exp, Ty::InferVar(_))
+                        || matches!(exp, Ty::Any);
+                    if compatible {
+                        matches.push(sig);
+                    }
+                }
+                if matches.is_empty() {
+                    errors.push(SemanticError::new(
+                        format!(
+                            "no overload for operator method `{base}` matches rhs type `{}`",
+                            ty_name(rhs_ty)
+                        ),
+                        *span,
+                    ));
+                    return None;
+                }
+                if matches.len() > 1 {
+                    errors.push(SemanticError::new(
+                        format!("ambiguous operator overload for `{base}`"),
+                        *span,
+                    ));
+                    return None;
+                }
+                matches[0].ret.clone().or(Some(Ty::Unit))
             };
+
+            fn unify_both(
+                target: &Ty,
+                lt: &Option<Ty>,
+                rt: &Option<Ty>,
+                infer_ctx: &mut infer::InferCtx,
+                errors: &mut Vec<SemanticError>,
+                span: Span,
+            ) -> bool {
+                let ok_l = lt
+                    .as_ref()
+                    .is_some_and(|l| infer::unify_types(l, target, infer_ctx, errors, span));
+                let ok_r = rt
+                    .as_ref()
+                    .is_some_and(|r| infer::unify_types(r, target, infer_ctx, errors, span));
+                ok_l && ok_r
+            }
+
+            if let (Some(lty), Some(rty)) = (&lt, &rt) {
+                let custom_method = match op {
+                    BinaryOp::Add => Some("binary_add"),
+                    BinaryOp::Sub => Some("binary_sub"),
+                    BinaryOp::Mul => Some("binary_mul"),
+                    BinaryOp::Div => Some("binary_div"),
+                    BinaryOp::Mod => Some("binary_mod"),
+                    BinaryOp::BitAnd => Some("binary_bitwise_and"),
+                    BinaryOp::BitOr => Some("binary_bitwise_or"),
+                    BinaryOp::BitXor => Some("binary_bitwise_xor"),
+                    BinaryOp::ShiftLeft => Some("binary_left_shift"),
+                    BinaryOp::ShiftRight => Some("binary_right_shift"),
+                    BinaryOp::Eq => Some("compare_equal"),
+                    BinaryOp::Ne => Some("compare_not_equal"),
+                    BinaryOp::Lt => Some("compare_less"),
+                    BinaryOp::Le => Some("compare_less_or_equal"),
+                    BinaryOp::Gt => Some("compare_greater"),
+                    BinaryOp::Ge => Some("compare_greater_or_equal"),
+                    BinaryOp::And => Some("binary_and"),
+                    BinaryOp::Or => Some("binary_or"),
+                };
+                if matches!(lty, Ty::Struct(_) | Ty::Enum { .. }) {
+                    if let Some(m) = custom_method {
+                        if let Some(ret) = resolve_custom_binary(lty, rty, m) {
+                            return Some(ret);
+                        }
+                        return None;
+                    }
+                }
+            }
             if lt.as_ref().is_some_and(contains_type_param)
                 || rt.as_ref().is_some_and(contains_type_param)
                 || lt.as_ref().is_some_and(contains_struct)
@@ -5289,23 +5555,74 @@ fn check_expr(
             }
             match op {
                 BinaryOp::Add => match (&lt, &rt) {
-                    (Some(Ty::Int), Some(Ty::Int)) => Some(Ty::Int),
-                    (Some(Ty::Float), Some(Ty::Float)) => Some(Ty::Float),
-                    (Some(Ty::String), Some(Ty::String)) => Some(Ty::String),
+                    (Some(Ty::Int), Some(Ty::Int)) => {
+                        if require_op(&ctx.registry, errors, *span, &Ty::Int, "binary_add") {
+                            Some(Ty::Int)
+                        } else {
+                            None
+                        }
+                    }
+                    (Some(Ty::Float), Some(Ty::Float)) => {
+                        if require_op(&ctx.registry, errors, *span, &Ty::Float, "binary_add") {
+                            Some(Ty::Float)
+                        } else {
+                            None
+                        }
+                    }
+                    (Some(Ty::String), Some(Ty::String)) => {
+                        if require_op(&ctx.registry, errors, *span, &Ty::String, "binary_add") {
+                            Some(Ty::String)
+                        } else {
+                            None
+                        }
+                    }
                     (Some(Ty::InferVar(_)), Some(Ty::Int))
                     | (Some(Ty::Int), Some(Ty::InferVar(_))) => {
-                        let _ = unify_to(Ty::Int);
-                        Some(Ty::Int)
+                        if require_op(&ctx.registry, errors, *span, &Ty::Int, "binary_add") {
+                            let _ = unify_both(
+                                &Ty::Int,
+                                &lt,
+                                &rt,
+                                &mut ctx.infer_ctx,
+                                errors,
+                                *span,
+                            );
+                            Some(Ty::Int)
+                        } else {
+                            None
+                        }
                     }
                     (Some(Ty::InferVar(_)), Some(Ty::Float))
                     | (Some(Ty::Float), Some(Ty::InferVar(_))) => {
-                        let _ = unify_to(Ty::Float);
-                        Some(Ty::Float)
+                        if require_op(&ctx.registry, errors, *span, &Ty::Float, "binary_add") {
+                            let _ = unify_both(
+                                &Ty::Float,
+                                &lt,
+                                &rt,
+                                &mut ctx.infer_ctx,
+                                errors,
+                                *span,
+                            );
+                            Some(Ty::Float)
+                        } else {
+                            None
+                        }
                     }
                     (Some(Ty::InferVar(_)), Some(Ty::String))
                     | (Some(Ty::String), Some(Ty::InferVar(_))) => {
-                        let _ = unify_to(Ty::String);
-                        Some(Ty::String)
+                        if require_op(&ctx.registry, errors, *span, &Ty::String, "binary_add") {
+                            let _ = unify_both(
+                                &Ty::String,
+                                &lt,
+                                &rt,
+                                &mut ctx.infer_ctx,
+                                errors,
+                                *span,
+                            );
+                            Some(Ty::String)
+                        } else {
+                            None
+                        }
                     }
                     _ => {
                         errors.push(SemanticError::new(
@@ -5316,22 +5633,104 @@ fn check_expr(
                     }
                 },
                 BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+                    let method = match op {
+                        BinaryOp::Sub => "binary_sub",
+                        BinaryOp::Mul => "binary_mul",
+                        BinaryOp::Div => "binary_div",
+                        BinaryOp::Mod => "binary_mod",
+                        _ => unreachable!("covered by outer match"),
+                    };
                     match (&lt, &rt) {
-                        (Some(Ty::Int), Some(Ty::Int)) => Some(Ty::Int),
-                        (Some(Ty::Float), Some(Ty::Float)) => Some(Ty::Float),
+                        (Some(Ty::Int), Some(Ty::Int)) => {
+                            if require_op(&ctx.registry, errors, *span, &Ty::Int, method) {
+                                Some(Ty::Int)
+                            } else {
+                                None
+                            }
+                        }
+                        (Some(Ty::Float), Some(Ty::Float)) => {
+                            if require_op(&ctx.registry, errors, *span, &Ty::Float, method) {
+                                Some(Ty::Float)
+                            } else {
+                                None
+                            }
+                        }
                         (Some(Ty::InferVar(_)), Some(Ty::Int))
                         | (Some(Ty::Int), Some(Ty::InferVar(_))) => {
-                            let _ = unify_to(Ty::Int);
-                            Some(Ty::Int)
+                            if require_op(&ctx.registry, errors, *span, &Ty::Int, method) {
+                                let _ = unify_both(
+                                    &Ty::Int,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Int)
+                            } else {
+                                None
+                            }
                         }
                         (Some(Ty::InferVar(_)), Some(Ty::Float))
                         | (Some(Ty::Float), Some(Ty::InferVar(_))) => {
-                            let _ = unify_to(Ty::Float);
-                            Some(Ty::Float)
+                            if require_op(&ctx.registry, errors, *span, &Ty::Float, method) {
+                                let _ = unify_both(
+                                    &Ty::Float,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Float)
+                            } else {
+                                None
+                            }
                         }
                         (Some(Ty::InferVar(_)), Some(Ty::InferVar(_))) => {
-                            let _ = unify_to(Ty::Int);
-                            Some(Ty::Int)
+                            // Prefer Int if available, otherwise Float; otherwise reject.
+                            if ctx
+                                .registry
+                                .contains_key(&op_key(&Ty::Int, method).expect("Int key"))
+                            {
+                                let _ = require_op(&ctx.registry, errors, *span, &Ty::Int, method);
+                                let _ = unify_both(
+                                    &Ty::Int,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Int)
+                            } else if ctx
+                                .registry
+                                .contains_key(&op_key(&Ty::Float, method).expect("Float key"))
+                            {
+                                let _ =
+                                    require_op(&ctx.registry, errors, *span, &Ty::Float, method);
+                                let _ = unify_both(
+                                    &Ty::Float,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Float)
+                            } else {
+                                push_missing_op(
+                                    errors,
+                                    *span,
+                                    &op_key(&Ty::Int, method).expect("Int key"),
+                                );
+                                push_missing_op(
+                                    errors,
+                                    *span,
+                                    &op_key(&Ty::Float, method).expect("Float key"),
+                                );
+                                None
+                            }
                         }
                         _ => {
                             errors.push(SemanticError::new(
@@ -5343,7 +5742,16 @@ fn check_expr(
                     }
                 }
                 BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
-                    if (lt == Some(Ty::Int) && rt == Some(Ty::Int)) || unify_to(Ty::Int) {
+                    let method = match op {
+                        BinaryOp::BitAnd => "binary_bitwise_and",
+                        BinaryOp::BitXor => "binary_bitwise_xor",
+                        BinaryOp::BitOr => "binary_bitwise_or",
+                        _ => unreachable!("covered by outer match"),
+                    };
+                    if ((lt == Some(Ty::Int) && rt == Some(Ty::Int))
+                        || unify_both(&Ty::Int, &lt, &rt, &mut ctx.infer_ctx, errors, *span))
+                        && require_op(&ctx.registry, errors, *span, &Ty::Int, method)
+                    {
                         Some(Ty::Int)
                     } else {
                         errors.push(SemanticError::new(
@@ -5354,7 +5762,15 @@ fn check_expr(
                     }
                 }
                 BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-                    if (lt == Some(Ty::Int) && rt == Some(Ty::Int)) || unify_to(Ty::Int) {
+                    let method = match op {
+                        BinaryOp::ShiftLeft => "binary_left_shift",
+                        BinaryOp::ShiftRight => "binary_right_shift",
+                        _ => unreachable!("covered by outer match"),
+                    };
+                    if ((lt == Some(Ty::Int) && rt == Some(Ty::Int))
+                        || unify_both(&Ty::Int, &lt, &rt, &mut ctx.infer_ctx, errors, *span))
+                        && require_op(&ctx.registry, errors, *span, &Ty::Int, method)
+                    {
                         Some(Ty::Int)
                     } else {
                         errors.push(SemanticError::new(
@@ -5373,9 +5789,75 @@ fn check_expr(
                         None
                     }
                     (Some(a), Some(b)) if a == b => match a {
-                        Ty::Int | Ty::Float | Ty::String | Ty::Bool | Ty::Unit => {
-                            Some(Ty::Bool)
+                        Ty::Int => {
+                            if require_op(
+                                &ctx.registry,
+                                errors,
+                                *span,
+                                &Ty::Int,
+                                if matches!(op, BinaryOp::Eq) {
+                                    "compare_equal"
+                                } else {
+                                    "compare_not_equal"
+                                },
+                            ) {
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
                         }
+                        Ty::Float => {
+                            if require_op(
+                                &ctx.registry,
+                                errors,
+                                *span,
+                                &Ty::Float,
+                                if matches!(op, BinaryOp::Eq) {
+                                    "compare_equal"
+                                } else {
+                                    "compare_not_equal"
+                                },
+                            ) {
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
+                        }
+                        Ty::String => {
+                            if require_op(
+                                &ctx.registry,
+                                errors,
+                                *span,
+                                &Ty::String,
+                                if matches!(op, BinaryOp::Eq) {
+                                    "compare_equal"
+                                } else {
+                                    "compare_not_equal"
+                                },
+                            ) {
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
+                        }
+                        Ty::Bool => {
+                            if require_op(
+                                &ctx.registry,
+                                errors,
+                                *span,
+                                &Ty::Bool,
+                                if matches!(op, BinaryOp::Eq) {
+                                    "compare_equal"
+                                } else {
+                                    "compare_not_equal"
+                                },
+                            ) {
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
+                        }
+                        Ty::Unit => Some(Ty::Bool),
                         Ty::Tuple(_) => Some(Ty::Bool),
                         Ty::Array(_) => Some(Ty::Bool),
                         Ty::Enum { .. } => {
@@ -5436,22 +5918,103 @@ fn check_expr(
                     _ => None,
                 },
                 BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
+                    let method = match op {
+                        BinaryOp::Lt => "compare_less",
+                        BinaryOp::Le => "compare_less_or_equal",
+                        BinaryOp::Gt => "compare_greater",
+                        BinaryOp::Ge => "compare_greater_or_equal",
+                        _ => unreachable!("covered by outer match"),
+                    };
                     match (&lt, &rt) {
-                        (Some(Ty::Int), Some(Ty::Int)) => Some(Ty::Bool),
-                        (Some(Ty::Float), Some(Ty::Float)) => Some(Ty::Bool),
+                        (Some(Ty::Int), Some(Ty::Int)) => {
+                            if require_op(&ctx.registry, errors, *span, &Ty::Int, method) {
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
+                        }
+                        (Some(Ty::Float), Some(Ty::Float)) => {
+                            if require_op(&ctx.registry, errors, *span, &Ty::Float, method) {
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
+                        }
                         (Some(Ty::InferVar(_)), Some(Ty::Int))
                         | (Some(Ty::Int), Some(Ty::InferVar(_))) => {
-                            let _ = unify_to(Ty::Int);
-                            Some(Ty::Bool)
+                            if require_op(&ctx.registry, errors, *span, &Ty::Int, method) {
+                                let _ = unify_both(
+                                    &Ty::Int,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
                         }
                         (Some(Ty::InferVar(_)), Some(Ty::Float))
                         | (Some(Ty::Float), Some(Ty::InferVar(_))) => {
-                            let _ = unify_to(Ty::Float);
-                            Some(Ty::Bool)
+                            if require_op(&ctx.registry, errors, *span, &Ty::Float, method) {
+                                let _ = unify_both(
+                                    &Ty::Float,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Bool)
+                            } else {
+                                None
+                            }
                         }
                         (Some(Ty::InferVar(_)), Some(Ty::InferVar(_))) => {
-                            let _ = unify_to(Ty::Int);
-                            Some(Ty::Bool)
+                            if ctx
+                                .registry
+                                .contains_key(&op_key(&Ty::Int, method).expect("Int key"))
+                            {
+                                let _ = require_op(&ctx.registry, errors, *span, &Ty::Int, method);
+                                let _ = unify_both(
+                                    &Ty::Int,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Bool)
+                            } else if ctx
+                                .registry
+                                .contains_key(&op_key(&Ty::Float, method).expect("Float key"))
+                            {
+                                let _ =
+                                    require_op(&ctx.registry, errors, *span, &Ty::Float, method);
+                                let _ = unify_both(
+                                    &Ty::Float,
+                                    &lt,
+                                    &rt,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                );
+                                Some(Ty::Bool)
+                            } else {
+                                push_missing_op(
+                                    errors,
+                                    *span,
+                                    &op_key(&Ty::Int, method).expect("Int key"),
+                                );
+                                push_missing_op(
+                                    errors,
+                                    *span,
+                                    &op_key(&Ty::Float, method).expect("Float key"),
+                                );
+                                None
+                            }
                         }
                         _ => {
                             errors.push(SemanticError::new(
@@ -5463,7 +6026,17 @@ fn check_expr(
                     }
                 }
                 BinaryOp::And | BinaryOp::Or => {
-                    if (lt == Some(Ty::Bool) && rt == Some(Ty::Bool)) || unify_to(Ty::Bool) {
+                    if (lt == Some(Ty::Bool) && rt == Some(Ty::Bool))
+                        || unify_both(&Ty::Bool, &lt, &rt, &mut ctx.infer_ctx, errors, *span)
+                    {
+                        let method = match op {
+                            BinaryOp::And => "binary_and",
+                            BinaryOp::Or => "binary_or",
+                            _ => unreachable!("covered by outer match"),
+                        };
+                        if !require_op(&ctx.registry, errors, *span, &Ty::Bool, method) {
+                            return None;
+                        }
                         Some(Ty::Bool)
                     } else {
                         errors.push(SemanticError::new(
@@ -5477,6 +6050,44 @@ fn check_expr(
         }
         AstNode::UnaryOp { op, operand, span } => {
             let t = check_expr(operand, ctx, errors).map(|tt| infer::resolve_ty(&tt, &ctx.infer_ctx));
+            if let Some(tt) = t.as_ref() {
+                let recv = match tt {
+                    Ty::Struct(n) => Some(struct_base_name(n).to_string()),
+                    Ty::Enum { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
+                if let Some(recv) = recv {
+                    let method = match op {
+                        UnaryOp::Not => Some("unary_not"),
+                        UnaryOp::BitNot => Some("unary_bitwise_not"),
+                        UnaryOp::Plus => Some("unary_plus"),
+                        UnaryOp::Minus => Some("unary_minus"),
+                    };
+                    if let Some(method) = method {
+                        let base = format!("{recv}::{method}");
+                        let mut matches = 0usize;
+                        let mut ret: Option<Ty> = None;
+                        for (k, sig) in ctx.registry {
+                            if (k.as_str() == base || k.starts_with(&(base.clone() + "#op(")))
+                                && !sig.params.is_empty()
+                            {
+                                matches += 1;
+                                ret = sig.ret.clone();
+                            }
+                        }
+                        if matches == 1 {
+                            return ret.or(Some(Ty::Unit));
+                        }
+                        if matches > 1 {
+                            errors.push(SemanticError::new(
+                                format!("ambiguous operator overload for `{base}`"),
+                                *span,
+                            ));
+                            return None;
+                        }
+                    }
+                }
+            }
             if t.as_ref().is_some_and(contains_type_param) {
                 errors.push(SemanticError::new(
                     "operators are not allowed on generic type parameters (no constraints yet)",
@@ -5492,9 +6103,16 @@ fn check_expr(
                 UnaryOp::Not => {
                     if t.as_ref().is_some_and(|tt| {
                         infer::unify_types(tt, &Ty::Bool, &mut ctx.infer_ctx, errors, *span)
-                    }) {
+                    }) && ctx.registry.contains_key("Bool::unary_not") {
                         Some(Ty::Bool)
                     } else {
+                        if !ctx.registry.contains_key("Bool::unary_not") {
+                            errors.push(SemanticError::new(
+                                "operator is not available: missing `internal func Bool::unary_not(...)`",
+                                *span,
+                            ));
+                            return None;
+                        }
                         errors.push(SemanticError::new(
                             "operator `!` requires a `Bool` operand",
                             *span,
@@ -5505,9 +6123,16 @@ fn check_expr(
                 UnaryOp::BitNot => {
                     if t.as_ref().is_some_and(|tt| {
                         infer::unify_types(tt, &Ty::Int, &mut ctx.infer_ctx, errors, *span)
-                    }) {
+                    }) && ctx.registry.contains_key("Int::unary_bitwise_not") {
                         Some(Ty::Int)
                     } else {
+                        if !ctx.registry.contains_key("Int::unary_bitwise_not") {
+                            errors.push(SemanticError::new(
+                                "operator is not available: missing `internal func Int::unary_bitwise_not(...)`",
+                                *span,
+                            ));
+                            return None;
+                        }
                         errors.push(SemanticError::new(
                             "unary `~` requires an `Int` operand",
                             *span,
@@ -5516,28 +6141,62 @@ fn check_expr(
                     }
                 }
                 UnaryOp::Plus | UnaryOp::Minus => {
+                    let method = match op {
+                        UnaryOp::Plus => "unary_plus",
+                        UnaryOp::Minus => "unary_minus",
+                        _ => unreachable!("covered by outer match"),
+                    };
                     match t.as_ref() {
                         // Avoid spurious "type mismatch expected X found Y" errors:
                         // if the operand already resolved to Float, don't try to unify it
                         // against Int first.
-                        Some(Ty::Int) => Some(Ty::Int),
-                        Some(Ty::Float) => Some(Ty::Float),
-                        Some(Ty::InferVar(_)) => {
-                            if infer::unify_types(
-                                t.as_ref().unwrap(),
-                                &Ty::Int,
-                                &mut ctx.infer_ctx,
-                                errors,
-                                *span,
-                            ) {
+                        Some(Ty::Int) => {
+                            if ctx.registry.contains_key(&format!("Int::{method}")) {
                                 Some(Ty::Int)
-                            } else if infer::unify_types(
-                                t.as_ref().unwrap(),
-                                &Ty::Float,
-                                &mut ctx.infer_ctx,
-                                errors,
-                                *span,
-                            ) {
+                            } else {
+                                errors.push(SemanticError::new(
+                                    format!(
+                                        "operator is not available: missing `internal func Int::{method}(...)`"
+                                    ),
+                                    *span,
+                                ));
+                                None
+                            }
+                        }
+                        Some(Ty::Float) => {
+                            if ctx.registry.contains_key(&format!("Float::{method}")) {
+                                Some(Ty::Float)
+                            } else {
+                                errors.push(SemanticError::new(
+                                    format!(
+                                        "operator is not available: missing `internal func Float::{method}(...)`"
+                                    ),
+                                    *span,
+                                ));
+                                None
+                            }
+                        }
+                        Some(Ty::InferVar(_)) => {
+                            // Prefer Int if available, otherwise Float; otherwise reject.
+                            if ctx.registry.contains_key(&format!("Int::{method}"))
+                                && infer::unify_types(
+                                    t.as_ref().unwrap(),
+                                    &Ty::Int,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                )
+                            {
+                                Some(Ty::Int)
+                            } else if ctx.registry.contains_key(&format!("Float::{method}"))
+                                && infer::unify_types(
+                                    t.as_ref().unwrap(),
+                                    &Ty::Float,
+                                    &mut ctx.infer_ctx,
+                                    errors,
+                                    *span,
+                                )
+                            {
                                 Some(Ty::Float)
                             } else {
                                 errors.push(SemanticError::new(
@@ -6400,18 +7059,71 @@ fn struct_base_name(name: &str) -> &str {
     name.split_once('<').map(|(b, _)| b).unwrap_or(name)
 }
 
+fn is_operator_method_name(name: &str) -> bool {
+    let Some((_, method)) = name.split_once("::") else {
+        return false;
+    };
+    matches!(
+        method,
+        "binary_add"
+            | "binary_sub"
+            | "binary_mul"
+            | "binary_div"
+            | "binary_mod"
+            | "binary_bitwise_and"
+            | "binary_bitwise_or"
+            | "binary_bitwise_xor"
+            | "binary_left_shift"
+            | "binary_right_shift"
+            | "compare_less"
+            | "compare_less_or_equal"
+            | "compare_greater"
+            | "compare_greater_or_equal"
+            | "compare_equal"
+            | "compare_not_equal"
+            | "binary_and"
+            | "binary_or"
+            | "unary_plus"
+            | "unary_minus"
+            | "unary_not"
+            | "unary_bitwise_not"
+    )
+}
+
+fn mangle_operator_overload_name(name: &str, params: &[Ty]) -> String {
+    if !is_operator_method_name(name) {
+        return name.to_string();
+    }
+    let sig = params.iter().map(ty_name).collect::<Vec<_>>().join("|");
+    format!("{name}#op({sig})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    fn check_src(src: &str) -> Vec<SemanticError> {
-        let mut lexer = Lexer::new(src);
+    fn core_operator_prelude() -> String {
+        let core = include_str!("../std/core.vc");
+        let cut = core
+            .find("export enum Option")
+            .expect("std/core.vc must contain `export enum Option`");
+        core[..cut].to_string()
+    }
+
+    fn check_src_with_prelude(prelude: &str, src: &str) -> Vec<SemanticError> {
+        let full = format!("{prelude}\n{src}");
+        let mut lexer = Lexer::new(&full);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().expect("parse");
         check_program(&ast)
+    }
+
+    fn check_src(src: &str) -> Vec<SemanticError> {
+        let prelude = core_operator_prelude();
+        check_src_with_prelude(&prelude, src)
     }
 
     #[test]
@@ -6492,6 +7204,20 @@ func main() {
     }
 
     #[test]
+    fn string_equality_requires_compare_equal_decl() {
+        let prelude = core_operator_prelude().replace(
+            "internal func String::compare_equal(self, other: String): Bool; // String == String\n",
+            "",
+        );
+        let errs = check_src_with_prelude(&prelude, r#"func main() { let _ = "a" == "b"; }"#);
+        assert!(
+            errs.iter().any(|e| e.message.contains("String::compare_equal")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
     fn tuple_equality_ok() {
         let errs = check_src("func main() { let _ = (1, 2) == (1, 2); }");
         assert!(errs.is_empty(), "{:?}", errs);
@@ -6539,9 +7265,95 @@ func main() {
     }
 
     #[test]
+    fn int_plus_requires_binary_add_decl() {
+        let prelude = core_operator_prelude().replace(
+            "internal func Int::binary_add(self, other: Int): Int; // Int + Int\n",
+            "",
+        );
+        let errs = check_src_with_prelude(&prelude, "func main() { let _ = 1 + 2; }");
+        assert!(
+            errs.iter().any(|e| e.message.contains("Int::binary_add")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn bool_equality_requires_compare_equal_decl() {
+        let prelude = core_operator_prelude().replace(
+            "internal func Bool::compare_equal(self, other: Bool): Bool; // Bool == Bool\n",
+            "",
+        );
+        let errs = check_src_with_prelude(&prelude, "func main() { let _ = true == true; }");
+        assert!(
+            errs.iter().any(|e| e.message.contains("Bool::compare_equal")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn bool_and_requires_binary_and_decl() {
+        let prelude = core_operator_prelude().replace(
+            "internal func Bool::binary_and(self, other: Bool): Bool; // Bool && Bool\n",
+            "",
+        );
+        let errs = check_src_with_prelude(&prelude, "func main() { let _ = true && false; }");
+        assert!(
+            errs.iter().any(|e| e.message.contains("Bool::binary_and")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn bool_not_requires_unary_not_decl() {
+        let prelude = core_operator_prelude().replace(
+            "internal func Bool::unary_not(self): Bool; // !Bool\n",
+            "",
+        );
+        let errs = check_src_with_prelude(&prelude, "func main() { let _ = !true; }");
+        assert!(
+            errs.iter().any(|e| e.message.contains("Bool::unary_not")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn custom_struct_operator_overload_by_rhs_type() {
+        let errs = check_src(
+            r#"struct Foo;
+               func Foo::compare_greater(self, other: Float): Bool { return false; }
+               func Foo::compare_greater(self, other: Int): Bool { return true; }
+               func Foo::binary_add(self, other: Bool): Bool { return other; }
+               func main() {
+                   let a: Bool = Foo > 1.5;
+                   let b: Bool = Foo > 1;
+                   let c: Bool = Foo + true;
+               }"#,
+        );
+        assert!(errs.is_empty(), "{:?}", errs);
+    }
+
+    #[test]
+    fn custom_struct_operator_missing_overload_rejected() {
+        let errs = check_src(
+            r#"struct Foo;
+               func Foo::compare_greater(self, other: Int): Bool { return true; }
+               func main() { let _ = Foo > true; }"#,
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("no overload for operator method")),
+            "{:?}",
+            errs
+        );
+    }
+
+    #[test]
     fn task_comparisons_rejected() {
         let errs = check_src(
-            r#"internal struct Task<T = ()>;
+            r#"struct Task<T = ()>;
                internal async func sleep(ms: Int): Task;
                async func main(): Task {
                    let t = sleep(0);
@@ -7817,7 +8629,7 @@ func main() {{
     #[test]
     fn await_outside_async_rejected() {
         let errs = check_src(
-            r#"internal struct Task<T = ()>;
+            r#"struct Task<T = ()>;
                internal async func sleep(ms: Int): Task;
                func main() {
                    await sleep(0);
@@ -7832,7 +8644,7 @@ func main() {{
     #[test]
     fn async_main_task_unit_ok() {
         let errs = check_src(
-            r#"internal struct Task<T = ()>;
+            r#"struct Task<T = ()>;
                internal async func sleep(ms: Int): Task;
                async func main(): Task {
                    await sleep(0);
@@ -7844,7 +8656,7 @@ func main() {{
     #[test]
     fn async_func_returns_payload_type() {
         let errs = check_src(
-            r#"internal struct Task<T = ()>;
+            r#"struct Task<T = ()>;
                async func f(): Task<Int> {
                    return 42;
                }

@@ -37,8 +37,8 @@ type Res<T> = Result<T, String>;
 - Type aliases are compile-time only and may be generic:
   - `type UserId = Int;`
   - `type Res<T> = Result<T, String>;`
-- Generic parameters may have defaults (Rust-like trailing defaults), for example `internal struct Task<T = ()>;` so bare `Task` means `Task<()>` in type positions.
-- Internal nominal types: `internal struct Name<T = U, ...>;` declares a host-registered type (not a normal `Struct` value at runtime). The only such type in v1 is `Task`.
+- Generic parameters may have defaults (Rust-like trailing defaults), for example `export struct Task<T = ()>;` so bare `Task` means `Task<()>` in type positions.
+- VM nominal types: `export struct Name<T = U, ...>;` declares a host-registered nominal type (not intended as a regular user-defined runtime struct). The only such type in v1 is `Task`.
 
 ## Valid examples
 

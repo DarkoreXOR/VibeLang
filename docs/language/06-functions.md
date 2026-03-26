@@ -64,6 +64,16 @@ func get(): Res<_> = Res::Ok(5);
 - Generic struct-receiver extensions:
   - declaration with generic receiver type parameter: `func T::m<T>(self): T { ... }`
   - for struct instance calls, resolution is concrete first, then generic fallback candidates.
+- Operator overloading via extension methods:
+  - custom operator implementations are declared as extension methods on the receiver type.
+  - operator methods may be overloaded by parameter type (same method name, different typed params).
+  - supported operator method names:
+    - binary: `binary_add`, `binary_sub`, `binary_mul`, `binary_div`, `binary_mod`, `binary_bitwise_and`, `binary_bitwise_or`, `binary_bitwise_xor`, `binary_left_shift`, `binary_right_shift`, `compare_less`, `compare_less_or_equal`, `compare_greater`, `compare_greater_or_equal`, `compare_equal`, `compare_not_equal`, `binary_and`, `binary_or`
+    - unary: `unary_plus`, `unary_minus`, `unary_not`, `unary_bitwise_not`
+  - examples:
+    - `func Foo::binary_add(self, rhs: Int): Foo { ... }` for `Foo + Int`
+    - `func Foo::compare_greater(self, rhs: Float): Bool { ... }` for `Foo > Float`
+    - `func Foo::compare_greater(self, rhs: Int): Bool { ... }` for `Foo > Int` (overload)
 
 ## Valid examples
 

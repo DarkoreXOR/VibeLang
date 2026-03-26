@@ -52,6 +52,21 @@ pub fn load_linked_program(entry_file: &str) -> Result<AstNode, ModuleLoadError>
     let mut loaded: HashMap<PathBuf, ModuleData> = HashMap::new();
     let mut visiting: HashSet<PathBuf> = HashSet::new();
     let mut order: Vec<PathBuf> = Vec::new();
+
+    // Always load `std/core.vc` so non-exported operator intrinsics (e.g. `Int::binary_add`)
+    // are present even when user code doesn't import `std/core` explicitly.
+    let core_candidate = workspace.join("std").join("core.vc");
+    if core_candidate.exists() {
+        let core_path = canonicalize_path(&core_candidate, &workspace)?;
+        load_module_recursive(
+            &workspace,
+            &core_path,
+            &mut loaded,
+            &mut visiting,
+            &mut order,
+        )?;
+    }
+
     load_module_recursive(
         &workspace,
         &entry_path,
@@ -222,6 +237,7 @@ fn rename_declaration(item: AstNode, new_name: &str) -> AstNode {
         AstNode::EnumDef {
             type_params,
             variants,
+            is_internal,
             name_span,
             span,
             ..
@@ -229,6 +245,7 @@ fn rename_declaration(item: AstNode, new_name: &str) -> AstNode {
             name: new_name.to_string(),
             type_params,
             variants,
+            is_internal,
             name_span,
             span,
             is_exported: false,
@@ -553,6 +570,7 @@ fn strip_export(item: &AstNode) -> AstNode {
             name,
             type_params,
             variants,
+            is_internal,
             name_span,
             span,
             ..
@@ -560,6 +578,7 @@ fn strip_export(item: &AstNode) -> AstNode {
             name: name.clone(),
             type_params: type_params.clone(),
             variants: variants.clone(),
+            is_internal: *is_internal,
             name_span: *name_span,
             span: *span,
             is_exported: false,
@@ -574,9 +593,13 @@ mod tests {
     use crate::bytecode_gen::compile_program;
     use crate::semantic::check_program;
     use crate::vm::run_program;
+    use std::sync::Mutex;
+
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn load_example18_modules_and_run() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
@@ -590,6 +613,7 @@ mod tests {
 
     #[test]
     fn load_example20_extensions_and_run() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
@@ -603,6 +627,7 @@ mod tests {
 
     #[test]
     fn load_example21_generic_array_extensions_and_run() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
@@ -616,6 +641,7 @@ mod tests {
 
     #[test]
     fn import_non_exported_symbol_fails() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         let base = std::env::temp_dir().join("vibelang_module_test_non_export");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("examples")).expect("mkdir");
@@ -638,6 +664,7 @@ mod tests {
 
     #[test]
     fn unimported_exported_symbol_is_not_visible() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         let base = std::env::temp_dir().join("vibelang_module_test_explicit_imports");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("std")).expect("mkdir");
@@ -664,6 +691,26 @@ mod tests {
             errs.iter().any(|e| e.message.contains("unknown enum `Result`")),
             "{:?}",
             errs
+        );
+    }
+
+    #[test]
+    fn load_fetch_includes_net_method_enum() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let restore_dir = std::env::current_dir().expect("cwd");
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        std::env::set_current_dir(&manifest_dir).expect("chdir");
+        let ast = load_linked_program("examples/fetch.vc").expect("load");
+        std::env::set_current_dir(restore_dir).expect("restore cwd");
+
+        let items = match ast {
+            AstNode::Program(items) => items,
+            _ => panic!("expected Program"),
+        };
+
+        assert!(
+            items.iter().any(|it| matches!(it, AstNode::EnumDef { name, .. } if name == "Method")),
+            "expected linked program to contain `enum Method` from std/net"
         );
     }
 }

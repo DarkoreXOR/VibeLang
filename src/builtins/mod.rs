@@ -26,6 +26,7 @@ mod sleep;
 mod wait_all_tasks;
 mod create_completed_task;
 mod dict;
+mod fetch;
 
 use concat::ConcatBuiltin;
 use input::InputBuiltin;
@@ -43,6 +44,7 @@ use sleep::SleepBuiltin;
 use wait_all_tasks::WaitAllTasksBuiltin;
 use create_completed_task::CreateCompletedTaskBuiltin;
 use dict::{DictContainsBuiltin, DictGetBuiltin, DictInsertBuiltin, DictRemoveBuiltin};
+use fetch::FetchBuiltin;
 
 #[derive(Debug)]
 pub struct BuiltinError {
@@ -104,10 +106,16 @@ impl BuiltinRegistry {
 
     pub fn resolve_internal_async_callee(
         &self,
+        name: &str,
         params: &[Param],
         return_type: &Option<TypeExpr>,
         name_span: Span,
     ) -> Result<&'static str, BuiltinError> {
+        if let Some(b) = self.builtins.get(name) {
+            if b.validate_decl(params, return_type, name_span).is_ok() {
+                return Ok(b.name());
+            }
+        }
         if let Some(b) = self.builtins.get("sleep") {
             if b.validate_decl(params, return_type, name_span).is_ok() {
                 return Ok("sleep");
@@ -123,8 +131,13 @@ impl BuiltinRegistry {
                 return Ok("create_completed_task_async");
             }
         }
+        if let Some(b) = self.builtins.get("fetch") {
+            if b.validate_decl(params, return_type, name_span).is_ok() {
+                return Ok("fetch");
+            }
+        }
         Err(BuiltinError::new(
-            "internal `async func` must match built-in `sleep` or `wait_all_tasks_async` signatures",
+            "internal `async func` must match a built-in async signature (sleep, wait_all_tasks_async, create_completed_task_async, fetch)",
             Some(name_span),
         ))
     }
@@ -138,7 +151,7 @@ impl BuiltinRegistry {
         is_async: bool,
     ) -> Result<(), BuiltinError> {
         if is_async {
-            self.resolve_internal_async_callee(params, return_type, name_span)?;
+            self.resolve_internal_async_callee(name, params, return_type, name_span)?;
             return Ok(());
         }
         if name == "sleep" && !is_async {
@@ -147,6 +160,41 @@ impl BuiltinRegistry {
                 Some(name_span),
             ));
         }
+
+        // Operator intrinsics are declared as `internal func Type::op(...)` in `std/core.vc`
+        // and are executed by VM bytecode instructions, not by builtin dispatch.
+        if let Some((ty, method)) = name.split_once("::") {
+            let is_op_ty = matches!(ty, "Int" | "Float" | "String" | "Bool");
+            let is_op_method = matches!(
+                method,
+                "compare_equal"
+                    | "compare_not_equal"
+                    | "binary_add"
+                    | "binary_sub"
+                    | "binary_mul"
+                    | "binary_div"
+                    | "binary_mod"
+                    | "binary_bitwise_and"
+                    | "binary_bitwise_or"
+                    | "binary_bitwise_xor"
+                    | "binary_left_shift"
+                    | "binary_right_shift"
+                    | "compare_less"
+                    | "compare_less_or_equal"
+                    | "compare_greater"
+                    | "compare_greater_or_equal"
+                    | "unary_plus"
+                    | "unary_minus"
+                    | "unary_bitwise_not"
+                    | "binary_and"
+                    | "binary_or"
+                    | "unary_not"
+            );
+            if is_op_ty && is_op_method {
+                return Ok(());
+            }
+        }
+
         let key = canonical_builtin_name(name);
         let Some(b) = self.builtins.get(key) else {
             return Err(BuiltinError::new(
@@ -198,6 +246,7 @@ fn default_registry_impl() -> BuiltinRegistry {
     reg.register(SleepBuiltin);
     reg.register(WaitAllTasksBuiltin);
     reg.register(CreateCompletedTaskBuiltin);
+    reg.register(FetchBuiltin);
     reg.register(DictContainsBuiltin);
     reg.register(DictGetBuiltin);
     reg.register(DictInsertBuiltin);

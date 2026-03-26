@@ -98,7 +98,7 @@ impl Parser {
                 }
                 let item = match self.peek().kind {
                     TokenKind::Struct => self.parse_struct_definition(false)?,
-                    TokenKind::Enum => self.parse_enum_definition()?,
+                    TokenKind::Enum => self.parse_enum_definition(false)?,
                     TokenKind::Type => self.parse_type_alias_definition()?,
                     TokenKind::Async => {
                         self.advance(); // `async`
@@ -120,7 +120,7 @@ impl Parser {
             }
             TokenKind::Let => self.parse_let_statement(true, true),
             TokenKind::Struct => self.parse_struct_definition(false),
-            TokenKind::Enum => self.parse_enum_definition(),
+            TokenKind::Enum => self.parse_enum_definition(false),
             TokenKind::Type => self.parse_type_alias_definition(),
             TokenKind::Async => {
                 self.advance(); // `async`
@@ -360,6 +360,7 @@ impl Parser {
                 name,
                 type_params,
                 variants,
+                is_internal,
                 name_span,
                 span,
                 ..
@@ -367,6 +368,7 @@ impl Parser {
                 name,
                 type_params,
                 variants,
+                is_internal,
                 name_span,
                 span,
                 is_exported: true,
@@ -969,43 +971,20 @@ impl Parser {
         }
     }
 
-    /// `internal struct ...`, `internal func ...`, or `internal async func ...`
+    /// `internal func ...` or `internal async func ...`
     fn parse_internal_declaration(&mut self) -> Result<AstNode, ParseError> {
         self.advance(); // `internal`
         match self.peek().kind.clone() {
             TokenKind::Export => {
-                // Support `internal export enum ...` (used for internal core enums like
-                // `Option` / `Result`).
-                self.advance(); // `export`
-                match self.peek().kind.clone() {
-                    TokenKind::Enum => {
-                        let mut e = self.parse_enum_definition()?;
-                        if let AstNode::EnumDef { is_exported, .. } = &mut e {
-                            *is_exported = true;
-                        }
-                        Ok(e)
-                    }
-                    TokenKind::Struct => {
-                        let mut s = self.parse_struct_definition(true)?;
-                        if let AstNode::StructDef { is_exported, .. } = &mut s {
-                            *is_exported = true;
-                        }
-                        Ok(s)
-                    }
-                    TokenKind::Type => {
-                        let mut t = self.parse_type_alias_definition()?;
-                        if let AstNode::TypeAlias { is_exported, .. } = &mut t {
-                            *is_exported = true;
-                        }
-                        Ok(t)
-                    }
-                    _ => Err(ParseError::UnexpectedToken {
-                        message: "expected `enum`, `struct`, or `type` after `internal export`".to_string(),
-                        span: Some(self.peek().span),
-                    }),
-                }
+                // Language items (`struct`/`enum`/`type`) must not use `internal`.
+                // `internal export ...` is therefore rejected.
+                Err(ParseError::UnexpectedToken {
+                    message:
+                        "`internal` supports only `func`/`async func` declarations; structs/enums/types must be `export`/non-internal"
+                            .to_string(),
+                    span: Some(self.peek().span),
+                })
             }
-            TokenKind::Struct => self.parse_struct_definition(true),
             TokenKind::Async => {
                 self.advance(); // `async`
                 self.expect_func_after_async()?; // consumes `func`
@@ -1016,7 +995,7 @@ impl Parser {
                 self.parse_internal_function_declaration(true, false)
             }
             _ => Err(ParseError::UnexpectedToken {
-                message: "expected `struct`, `async func`, or `func` after `internal`".to_string(),
+                message: "expected `async func` or `func` after `internal`".to_string(),
                 span: Some(self.peek().span),
             }),
         }
@@ -1107,7 +1086,7 @@ impl Parser {
     }
 
     /// `enum Name<T, U> { Variant, Other(T), ... }`
-    fn parse_enum_definition(&mut self) -> Result<AstNode, ParseError> {
+    fn parse_enum_definition(&mut self, is_internal: bool) -> Result<AstNode, ParseError> {
         let span = self.peek().span;
         self.advance(); // `enum`
         let (name, name_span) = self.take_identifier()?;
@@ -1181,6 +1160,7 @@ impl Parser {
             name,
             type_params,
             variants,
+            is_internal,
             name_span,
             span,
             is_exported: false,
@@ -3440,6 +3420,28 @@ mod tests {
             }
             _ => panic!("Expected Program node"),
         }
+    }
+
+    #[test]
+    fn parse_export_internal_enum_marks_export_and_internal() {
+        let src = r#"export internal enum Method { Get }"#;
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser
+            .parse()
+            .expect_err("internal enums are no longer supported; only internal functions/async funcs");
+    }
+
+    #[test]
+    fn parse_internal_export_enum_marks_export_and_internal() {
+        let src = r#"internal export enum Method { Get }"#;
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser
+            .parse()
+            .expect_err("internal export enum declarations must be rejected");
     }
 
     #[test]
@@ -5842,7 +5844,7 @@ func main() {}
     }
 
     #[test]
-    fn parse_internal_struct_task_default_and_async_await() {
+    fn reject_internal_struct_task_default_and_async_await() {
         let src = r#"
 internal struct Task<T = ()>;
 internal async func sleep(ms: Int): Task;
@@ -5857,31 +5859,9 @@ async func main(): Task {
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);
-        let ast = parser.parse().expect("parse");
-        let AstNode::Program(nodes) = ast else {
-            panic!("expected Program");
-        };
-        assert!(
-            nodes.iter().any(|n| matches!(n,
-                AstNode::StructDef { name, is_internal: true, .. } if name == "Task"
-            ))
-        );
-        assert!(
-            nodes.iter().any(|n| matches!(n,
-                AstNode::InternalFunction { name, is_async: true, .. } if name == "sleep"
-            ))
-        );
-        let AstNode::Function { body, is_async: true, .. } = nodes
-            .iter()
-            .find(|n| matches!(n, AstNode::Function { name, .. } if name == "work"))
-            .expect("work")
-        else {
-            panic!("work");
-        };
-        assert!(
-            body.iter().any(|s| matches!(s, AstNode::Await { .. })),
-            "expected `await` statement"
-        );
+        parser
+            .parse()
+            .expect_err("internal struct declarations must be rejected");
     }
 
 }

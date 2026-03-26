@@ -1,9 +1,65 @@
-internal export enum Option<T> {
+struct String;
+
+internal func String::compare_equal(self, other: String): Bool; // String == String
+internal func String::compare_not_equal(self, other: String): Bool; // String != String
+internal func String::binary_add(self, other: String): String; // String + String
+
+struct Int;
+
+internal func Int::compare_equal(self, other: Int): Bool; // Int == Int
+internal func Int::compare_not_equal(self, other: Int): Bool; // Int != Int
+internal func Int::binary_add(self, other: Int): Int; // Int + Int
+internal func Int::binary_sub(self, other: Int): Int; // Int - Int
+internal func Int::binary_mul(self, other: Int): Int; // Int * Int
+internal func Int::binary_div(self, other: Int): Int; // Int / Int
+internal func Int::binary_mod(self, other: Int): Int; // Int % Int
+internal func Int::binary_bitwise_and(self, other: Int): Int; // Int & Int
+internal func Int::binary_bitwise_or(self, other: Int): Int; // Int | Int
+internal func Int::binary_bitwise_xor(self, other: Int): Int; // Int ^ Int
+internal func Int::binary_left_shift(self, other: Int): Int; // Int << Int
+internal func Int::binary_right_shift(self, other: Int): Int; // Int >> Int
+internal func Int::compare_less(self, other: Int): Bool; // Int < Int
+internal func Int::compare_less_or_equal(self, other: Int): Bool; // Int <= Int
+internal func Int::compare_greater(self, other: Int): Bool; // Int > Int
+internal func Int::compare_greater_or_equal(self, other: Int): Bool; // Int >= Int
+internal func Int::unary_plus(self): Int; // +Int
+internal func Int::unary_minus(self): Int; // -Int
+internal func Int::unary_bitwise_not(self): Int; // ~Int
+
+struct Float;
+
+internal func Float::compare_equal(self, other: Float): Bool; // Float == Float
+internal func Float::compare_not_equal(self, other: Float): Bool; // Float != Float
+internal func Float::binary_add(self, other: Float): Float; // Float + Float
+internal func Float::binary_sub(self, other: Float): Float; // Float - Float
+internal func Float::binary_mul(self, other: Float): Float; // Float * Float
+internal func Float::binary_div(self, other: Float): Float; // Float / Float
+internal func Float::binary_mod(self, other: Float): Float; // Float % Float
+internal func Float::compare_less(self, other: Float): Bool; // Float < Float
+internal func Float::compare_less_or_equal(self, other: Float): Bool; // Float <= Float
+internal func Float::compare_greater(self, other: Float): Bool; // Float > Float
+internal func Float::compare_greater_or_equal(self, other: Float): Bool; // Float >= Float
+internal func Float::unary_plus(self): Float; // +Float
+internal func Float::unary_minus(self): Float; // -Float
+
+//
+
+struct Bool;
+
+internal func Bool::compare_equal(self, other: Bool): Bool; // Bool == Bool
+internal func Bool::compare_not_equal(self, other: Bool): Bool; // Bool != Bool
+internal func Bool::binary_and(self, other: Bool): Bool; // Bool && Bool
+internal func Bool::binary_or(self, other: Bool): Bool; // Bool || Bool
+internal func Bool::unary_not(self): Bool; // !Bool
+
+//
+
+export enum Option<T> {
     None,
     Some(T),
 }
 
-internal export enum Result<T, E> {
+export enum Result<T, E> {
     Ok(T),
     Err(E),
 }

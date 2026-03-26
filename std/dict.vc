@@ -1,6 +1,6 @@
 import { Option } from "core";
 
-export internal struct Dict<K, V>;
+export struct Dict<K, V>;
 
 export internal func Dict<type K, type V>::contains<K, V>(self, key: K): Bool;
 

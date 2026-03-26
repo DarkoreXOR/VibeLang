@@ -1,0 +1,29 @@
+import { Task } from "std/async";
+import { Dict } from "std/dict";
+
+export enum Method {
+    Get,
+    Head,
+    Post,
+    Put,
+    Delete,
+    Connect,
+    Options,
+    Trace,
+    Patch,
+}
+
+export struct Request {
+    endpoint: String,
+    method: Method,
+    headers: Dict<String, String>,
+    body: String,
+}
+
+export struct Response {
+    status: Int,
+    headers: Dict<String, String>,
+    body: String,
+}
+
+export internal async func fetch(request: Request): Task<Response>;

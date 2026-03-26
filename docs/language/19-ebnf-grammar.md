@@ -73,8 +73,7 @@ EnumVariant           = Identifier [ "(" TypeExpr { "," TypeExpr } ")" ] ;
 TypeAliasDef          = "type" Identifier TypeParamsOpt "=" TypeExpr ";" ;
 
 (* -------- internal declarations -------- *)
-InternalDecl          = "internal" ( InternalStructDef | InternalFuncDecl | InternalAsyncFuncDecl ) ;
-InternalStructDef     = "struct" Identifier TypeParamsOpt ";" ;
+InternalDecl          = "internal" ( InternalFuncDecl | InternalAsyncFuncDecl ) ;
 
 InternalFuncDecl      = "func" FuncNameWithExtReceiver TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt ";" ;
 InternalAsyncFuncDecl = "async" "func" FuncNameWithExtReceiver TypeParamsOpt "(" ParameterList ")" ReturnTypeOpt ";" ;

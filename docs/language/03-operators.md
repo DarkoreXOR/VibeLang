@@ -40,7 +40,35 @@ let s = "a" + "b";
 - Bitwise operators (`& | ^ ~`) are `Int`-only.
 - Shifts (`<< >>`) are `Int`-only.
 - Logical operators (`&& || !`) are `Bool`-only.
-- Operators are not defined for structs/enums directly.
+- Custom struct/enum types can overload operators via extension methods on the LHS receiver type.
+  - Binary operator method names:
+    - `+` -> `binary_add`
+    - `-` -> `binary_sub`
+    - `*` -> `binary_mul`
+    - `/` -> `binary_div`
+    - `%` -> `binary_mod`
+    - `&` -> `binary_bitwise_and`
+    - `|` -> `binary_bitwise_or`
+    - `^` -> `binary_bitwise_xor`
+    - `<<` -> `binary_left_shift`
+    - `>>` -> `binary_right_shift`
+    - `<` -> `compare_less`
+    - `<=` -> `compare_less_or_equal`
+    - `>` -> `compare_greater`
+    - `>=` -> `compare_greater_or_equal`
+    - `==` -> `compare_equal`
+    - `!=` -> `compare_not_equal`
+    - `&&` -> `binary_and`
+    - `||` -> `binary_or`
+  - Unary operator method names:
+    - `+x` -> `unary_plus`
+    - `-x` -> `unary_minus`
+    - `!x` -> `unary_not`
+    - `~x` -> `unary_bitwise_not`
+  - Example:
+    - `Foo + rhs` resolves to `Foo::binary_add(self, rhs)`.
+    - `Foo > rhs` resolves to `Foo::compare_greater(self, rhs)`.
+  - Overload resolution supports multiple operator methods with the same name, chosen by argument type.
 
 ## Valid examples
 
@@ -68,6 +96,20 @@ func main() {
     let b = 3;
     let c = (a << 1) ^ b;
     let d = (a % -b) + (a / b);
+}
+```
+
+```vc
+struct Foo;
+
+func Foo::compare_greater(self, other: Float): Bool { return false; }
+func Foo::compare_greater(self, other: Int): Bool { return true; }
+func Foo::binary_add(self, other: Bool): Bool { return other; }
+
+func main() {
+    let b1 = Foo > 1.5;  // uses compare_greater(Float)
+    let b2 = Foo > 1;    // uses compare_greater(Int)
+    let b3 = Foo + true; // uses binary_add(Bool)
 }
 ```
 

@@ -506,7 +506,7 @@ pub fn monomorphize_program(ast: &AstNode) -> AstNode {
                 type_params,
                 is_internal,
                 ..
-            } if !type_params.is_empty() && !is_internal => {
+            } if !type_params.is_empty() && !is_internal && name != "Task" => {
                 generic_struct_templates.insert(name.clone(), item.clone());
             }
             AstNode::EnumDef {
@@ -555,6 +555,7 @@ pub fn monomorphize_program(ast: &AstNode) -> AstNode {
         }
         if let Some(AstNode::EnumDef {
             variants,
+            is_internal,
             name_span,
             span,
             is_exported,
@@ -565,6 +566,7 @@ pub fn monomorphize_program(ast: &AstNode) -> AstNode {
                 name: concrete,
                 type_params: Vec::new(),
                 variants: variants.clone(),
+                is_internal: *is_internal,
                 name_span: *name_span,
                 span: *span,
                 is_exported: *is_exported,

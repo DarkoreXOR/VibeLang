@@ -16,10 +16,13 @@ let e = [1, 2] != [2, 1];
 
 ## Rules and constraints
 
-- Ordering (`< > <= >=`) works on `Int` and `Float` (same-type operands).
+- Ordering (`< > <= >=`) works on:
+  - built-in numeric types: `Int`, `Float` (same-type operands)
+  - custom struct/enum receivers when an overload is declared (`Type::compare_less/...`)
 - Equality (`== !=`) works on:
-  - `Int`, `Float`, `String`, `Bool`, `()`
+  - built-in types: `Int`, `Float`, `String`, `Bool`, `()`
   - tuples and arrays of same shape/type
+  - custom struct/enum receivers when an overload is declared (`Type::compare_equal` / `Type::compare_not_equal`)
 - String ordering (like `"a" < "b"`) is not implemented.
 
 ## Valid examples

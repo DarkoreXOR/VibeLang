@@ -1,0 +1,30 @@
+import { print_gen } from "std/core";
+
+
+struct Foo;
+
+
+func Foo::compare_greater(self, other: Float): Bool { // Foo > Float
+    return false;
+}
+
+func Foo::compare_greater(self, other: Int): Bool { // Foo > Int
+    return true;
+}
+
+func Foo::binary_add(self, other: Bool): Bool { // Foo + Bool
+    return other;
+}
+
+
+func main() {
+    print_gen(Foo);
+    print_gen(Foo > 1.5);
+
+    let b1 = Foo + true;
+    print_gen(b1);
+
+    let foo = Foo;
+    let b2 = foo + false;
+    print_gen(b2);
+}

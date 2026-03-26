@@ -1,6 +1,6 @@
 import { int_array_len } from "std/core";
 
-export internal struct Task<T = ()>;
+export struct Task<T = ()>;
 
 // internals
 

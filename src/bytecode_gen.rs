@@ -42,6 +42,75 @@ fn validate_internal_func_decl(
         .map_err(|e| CompileError::new(e.message, e.span))
 }
 
+fn is_operator_method_name(name: &str) -> bool {
+    let Some((_, method)) = name.split_once("::") else {
+        return false;
+    };
+    matches!(
+        method,
+        "binary_add"
+            | "binary_sub"
+            | "binary_mul"
+            | "binary_div"
+            | "binary_mod"
+            | "binary_bitwise_and"
+            | "binary_bitwise_or"
+            | "binary_bitwise_xor"
+            | "binary_left_shift"
+            | "binary_right_shift"
+            | "compare_less"
+            | "compare_less_or_equal"
+            | "compare_greater"
+            | "compare_greater_or_equal"
+            | "compare_equal"
+            | "compare_not_equal"
+            | "binary_and"
+            | "binary_or"
+            | "unary_plus"
+            | "unary_minus"
+            | "unary_not"
+            | "unary_bitwise_not"
+    )
+}
+
+fn type_expr_sig(te: &TypeExpr) -> String {
+    match te {
+        TypeExpr::Infer => "_".to_string(),
+        TypeExpr::Named(n) => n.clone(),
+        TypeExpr::TypeParam(n) => format!("type {n}"),
+        TypeExpr::EnumApp { name, args } => {
+            let inner = args.iter().map(type_expr_sig).collect::<Vec<_>>().join(",");
+            format!("{name}<{inner}>")
+        }
+        TypeExpr::Tuple(parts) => {
+            let inner = parts.iter().map(type_expr_sig).collect::<Vec<_>>().join(",");
+            format!("({inner})")
+        }
+        TypeExpr::Unit => "()".to_string(),
+        TypeExpr::Array(inner) => format!("[{}]", type_expr_sig(inner)),
+        TypeExpr::Function { params, ret } => {
+            let p = params
+                .iter()
+                .map(|p| type_expr_sig(&p.ty))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("fn({p})->{}", type_expr_sig(ret))
+        }
+    }
+}
+
+fn mangle_operator_overload_name(name: &str, params: &[crate::ast::Param]) -> String {
+    if !is_operator_method_name(name) {
+        return name.to_string();
+    }
+    let sig = params
+        .iter()
+        .map(|p| type_expr_sig(&p.ty))
+        .collect::<Vec<_>>()
+        .join("|");
+    format!("{name}#op({sig})")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct LabelId(usize);
 
@@ -127,7 +196,9 @@ struct CallParamSpec {
 struct FnGen<'a> {
     globals: &'a HashMap<String, u32>,
     call_specs: &'a HashMap<String, Vec<CallParamSpec>>,
+    call_param_types: &'a HashMap<String, Vec<TypeExpr>>,
     call_returns: &'a HashMap<String, Option<TypeExpr>>,
+    op_overloads: &'a HashMap<String, Vec<String>>,
     enum_names: &'a HashSet<String>,
     alias_enum_targets: &'a HashMap<String, String>,
     unit_struct_names: &'a HashSet<String>,
@@ -160,7 +231,9 @@ impl<'a> FnGen<'a> {
     fn new(
         globals: &'a HashMap<String, u32>,
         call_specs: &'a HashMap<String, Vec<CallParamSpec>>,
+        call_param_types: &'a HashMap<String, Vec<TypeExpr>>,
         call_returns: &'a HashMap<String, Option<TypeExpr>>,
+        op_overloads: &'a HashMap<String, Vec<String>>,
         enum_names: &'a HashSet<String>,
         alias_enum_targets: &'a HashMap<String, String>,
         unit_struct_names: &'a HashSet<String>,
@@ -174,7 +247,9 @@ impl<'a> FnGen<'a> {
         Self {
             globals,
             call_specs,
+            call_param_types,
             call_returns,
+            op_overloads,
             enum_names,
             alias_enum_targets,
             unit_struct_names,
@@ -1174,6 +1249,35 @@ impl<'a> FnGen<'a> {
                 Ok(())
             }
             AstNode::UnaryOp { op, operand, span } => {
+                let method = match op {
+                    crate::ast::UnaryOp::Not => Some("unary_not"),
+                    crate::ast::UnaryOp::BitNot => Some("unary_bitwise_not"),
+                    crate::ast::UnaryOp::Plus => Some("unary_plus"),
+                    crate::ast::UnaryOp::Minus => Some("unary_minus"),
+                };
+                if let (Some(method), Some(ok)) = (method, self.infer_receiver_ty_key(operand.as_ref())) {
+                    let recv = format_ty_key(&ok);
+                    if !matches!(recv.as_str(), "Int" | "Float" | "String" | "Bool") {
+                        let base = format!("{recv}::{method}");
+                        let mut callee = if self.call_specs.contains_key(&base) {
+                            Some(base.clone())
+                        } else {
+                            None
+                        };
+                        if callee.is_none() {
+                            if let Some(cands) = self.op_overloads.get(&base) {
+                                if let Some(first) = cands.first() {
+                                    callee = Some(first.clone());
+                                }
+                            }
+                        }
+                        if let Some(callee) = callee {
+                            self.compile_expr(operand)?;
+                            self.emit_function_invoke(&callee, 1, *span);
+                            return Ok(());
+                        }
+                    }
+                }
                 self.compile_expr(operand)?;
                 self.emit(Instr::UnOp { op: *op, span: *span });
                 Ok(())
@@ -1184,6 +1288,65 @@ impl<'a> FnGen<'a> {
                 right,
                 span,
             } => {
+                let custom_method = match op {
+                    BinaryOp::Add => Some("binary_add"),
+                    BinaryOp::Sub => Some("binary_sub"),
+                    BinaryOp::Mul => Some("binary_mul"),
+                    BinaryOp::Div => Some("binary_div"),
+                    BinaryOp::Mod => Some("binary_mod"),
+                    BinaryOp::BitAnd => Some("binary_bitwise_and"),
+                    BinaryOp::BitOr => Some("binary_bitwise_or"),
+                    BinaryOp::BitXor => Some("binary_bitwise_xor"),
+                    BinaryOp::ShiftLeft => Some("binary_left_shift"),
+                    BinaryOp::ShiftRight => Some("binary_right_shift"),
+                    BinaryOp::Eq => Some("compare_equal"),
+                    BinaryOp::Ne => Some("compare_not_equal"),
+                    BinaryOp::Lt => Some("compare_less"),
+                    BinaryOp::Le => Some("compare_less_or_equal"),
+                    BinaryOp::Gt => Some("compare_greater"),
+                    BinaryOp::Ge => Some("compare_greater_or_equal"),
+                    BinaryOp::And => Some("binary_and"),
+                    BinaryOp::Or => Some("binary_or"),
+                };
+                if let Some(method) = custom_method {
+                    if let (Some(lk), Some(rk)) = (
+                        self.infer_receiver_ty_key(left.as_ref()),
+                        self.infer_receiver_ty_key(right.as_ref()),
+                    ) {
+                        let lhs_name = format_ty_key(&lk);
+                        if !matches!(lhs_name.as_str(), "Int" | "Float" | "String" | "Bool") {
+                            let base = format!("{lhs_name}::{method}");
+                            let mut callee = if self.call_specs.contains_key(&base) {
+                                Some(base.clone())
+                            } else {
+                                None
+                            };
+                            if callee.is_none() {
+                                if let Some(cands) = self.op_overloads.get(&base) {
+                                    let rkf = format_ty_key(&rk);
+                                    for c in cands {
+                                        if let Some(ptys) = self.call_param_types.get(c) {
+                                            if ptys.len() >= 2 {
+                                                if let Some(tk) = type_expr_to_ty_key(&ptys[1]) {
+                                                    if format_ty_key(&tk) == rkf {
+                                                        callee = Some(c.clone());
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(callee) = callee {
+                                self.compile_expr(left)?;
+                                self.compile_expr(right)?;
+                                self.emit_function_invoke(&callee, 2, *span);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
                 match op {
                     BinaryOp::And => {
                         // Short-circuit:
@@ -1401,7 +1564,9 @@ impl<'a> FnGen<'a> {
                 let mut child = FnGen::new(
                     self.globals,
                     self.call_specs,
+                    self.call_param_types,
                     self.call_returns,
+                    self.op_overloads,
                     self.enum_names,
                     self.alias_enum_targets,
                     self.unit_struct_names,
@@ -2245,7 +2410,9 @@ pub fn compile_program_with_builtins(
 
     let mut globals: HashMap<String, u32> = HashMap::new();
     let mut call_specs: HashMap<String, Vec<CallParamSpec>> = HashMap::new();
+    let mut call_param_types: HashMap<String, Vec<TypeExpr>> = HashMap::new();
     let mut call_returns: HashMap<String, Option<TypeExpr>> = HashMap::new();
+    let mut op_overloads: HashMap<String, Vec<String>> = HashMap::new();
     let mut enum_names: HashSet<String> = HashSet::new();
     let mut alias_enum_targets: HashMap<String, String> = HashMap::new();
     let mut unit_struct_names: HashSet<String> = HashSet::new();
@@ -2254,6 +2421,7 @@ pub fn compile_program_with_builtins(
     let mut generic_enum_ext: HashMap<String, Vec<String>> = HashMap::new();
     let mut generic_struct_ext: HashMap<String, Vec<String>> = HashMap::new();
     let mut extension_match_info: HashMap<String, (TyKey, Vec<String>)> = HashMap::new();
+    let mut function_decl_name: HashMap<(String, usize, usize), String> = HashMap::new();
     let mut async_callees: HashSet<String> = HashSet::new();
     let mut internal_async_vm_callee: HashMap<String, String> = HashMap::new();
     let mut struct_names: HashSet<String> = HashSet::new();
@@ -2272,7 +2440,7 @@ pub fn compile_program_with_builtins(
             } => {
                 if *is_async {
                     let canon = builtins
-                        .resolve_internal_async_callee(params, return_type, *name_span)
+                        .resolve_internal_async_callee(name, params, return_type, *name_span)
                         .map_err(|e| CompileError::new(e.message, e.span))?;
                     internal_async_vm_callee.insert(name.clone(), canon.to_string());
                     async_callees.insert(name.clone());
@@ -2296,6 +2464,10 @@ pub fn compile_program_with_builtins(
                             default_value: None,
                         })
                         .collect(),
+                );
+                call_param_types.insert(
+                    name.clone(),
+                    params.iter().map(|p| p.ty.clone()).collect(),
                 );
                 call_returns.insert(name.clone(), return_type.clone());
 
@@ -2343,6 +2515,7 @@ pub fn compile_program_with_builtins(
             }
             AstNode::Function {
                 name,
+                name_span,
                 type_params,
                 params,
                 return_type,
@@ -2350,8 +2523,17 @@ pub fn compile_program_with_builtins(
                 is_async,
                 ..
             } => {
+                let decl_name = mangle_operator_overload_name(name, params);
+                function_decl_name.insert(
+                    (name.clone(), name_span.line, name_span.column),
+                    decl_name.clone(),
+                );
+                if is_operator_method_name(name) {
+                    let base = name.clone();
+                    op_overloads.entry(base).or_default().push(decl_name.clone());
+                }
                 if *is_async {
-                    async_callees.insert(name.clone());
+                    async_callees.insert(decl_name.clone());
                 }
                 if let Some(ext) = extension_receiver {
                     if let TypeExpr::Array(inner) = &ext.ty {
@@ -2365,18 +2547,18 @@ pub fn compile_program_with_builtins(
                         if is_generic {
                             if let Some(tk) = type_expr_to_ty_key(&ext.ty) {
                                 extension_match_info.insert(
-                                    name.clone(),
+                                    decl_name.clone(),
                                     (tk, GenericParam::names(type_params)),
                                 );
                             }
                             let entry = generic_array_ext
                                 .entry(ext.method_name.clone())
                                 .or_default();
-                            if !entry.contains(name) {
+                            if !entry.contains(&decl_name) {
                                 if matches!(inner.as_ref(), TypeExpr::EnumApp { .. }) {
-                                    entry.insert(0, name.clone());
+                                    entry.insert(0, decl_name.clone());
                                 } else {
-                                    entry.push(name.clone());
+                                    entry.push(decl_name.clone());
                                 }
                             }
                         }
@@ -2385,21 +2567,21 @@ pub fn compile_program_with_builtins(
                         if is_generic {
                             if let Some(tk) = type_expr_to_ty_key(&ext.ty) {
                                 extension_match_info.insert(
-                                    name.clone(),
+                                    decl_name.clone(),
                                     (tk, GenericParam::names(type_params)),
                                 );
                             }
                             let entry = generic_enum_ext.entry(ext.method_name.clone()).or_default();
-                            if !entry.contains(name) {
-                                entry.insert(0, name.clone());
+                            if !entry.contains(&decl_name) {
+                                entry.insert(0, decl_name.clone());
                             }
                             if let TypeExpr::EnumApp { name: recv_name, .. } = &ext.ty {
                                 if struct_names.contains(recv_name) {
                                     let entry = generic_struct_ext
                                         .entry(ext.method_name.clone())
                                         .or_default();
-                                    if !entry.contains(name) {
-                                        entry.push(name.clone());
+                                    if !entry.contains(&decl_name) {
+                                        entry.push(decl_name.clone());
                                     }
                                 }
                             }
@@ -2408,21 +2590,21 @@ pub fn compile_program_with_builtins(
                         if type_params.iter().any(|tp| tp.name == *n) {
                             if let Some(tk) = type_expr_to_ty_key(&ext.ty) {
                                 extension_match_info.insert(
-                                    name.clone(),
+                                    decl_name.clone(),
                                     (tk, GenericParam::names(type_params)),
                                 );
                             }
                             let entry = generic_struct_ext
                                 .entry(ext.method_name.clone())
                                 .or_default();
-                            if !entry.contains(name) {
-                                entry.push(name.clone());
+                            if !entry.contains(&decl_name) {
+                                entry.push(decl_name.clone());
                             }
                         }
                     }
                 }
                 call_specs.insert(
-                    name.clone(),
+                    decl_name.clone(),
                     params
                         .iter()
                         .map(|p| CallParamSpec {
@@ -2432,7 +2614,11 @@ pub fn compile_program_with_builtins(
                         })
                         .collect(),
                 );
-                call_returns.insert(name.clone(), return_type.clone());
+                call_param_types.insert(
+                    decl_name.clone(),
+                    params.iter().map(|p| p.ty.clone()).collect(),
+                );
+                call_returns.insert(decl_name.clone(), return_type.clone());
             }
             AstNode::StructDef { name, is_unit, .. } => {
                 struct_names.insert(name.clone());
@@ -2498,7 +2684,9 @@ pub fn compile_program_with_builtins(
     let mut init_gen = FnGen::new(
         &globals,
         &call_specs,
+        &call_param_types,
         &call_returns,
+        &op_overloads,
         &enum_names,
         &alias_enum_targets,
         &unit_struct_names,
@@ -2582,11 +2770,17 @@ pub fn compile_program_with_builtins(
             ..
         } = item
         {
+            let decl_name = function_decl_name
+                .get(&(name.clone(), name_span.line, name_span.column))
+                .cloned()
+                .unwrap_or_else(|| name.clone());
             // Internal functions are already validated; do not compile them as user functions.
             let mut fn_gen = FnGen::new(
                 &globals,
                 &call_specs,
+                &call_param_types,
                 &call_returns,
+                &op_overloads,
                 &enum_names,
                 &alias_enum_targets,
                 &unit_struct_names,
@@ -2597,7 +2791,7 @@ pub fn compile_program_with_builtins(
                 &async_callees,
                 &internal_async_vm_callee,
             );
-            fn_gen.current_fn_name = name.clone();
+            fn_gen.current_fn_name = decl_name.clone();
             fn_gen.push_scope();
             let mut real_param_slots: Vec<Option<u32>> = Vec::with_capacity(params.len());
             for p in params {
@@ -2625,7 +2819,7 @@ pub fn compile_program_with_builtins(
             fn_gen.labeler.patch_all(&mut fn_gen.code);
 
             functions.push(FunctionBytecode {
-                name: name.clone(),
+                name: decl_name,
                 code: fn_gen.code,
                 local_count: fn_gen.next_local_slot,
                 param_count: params.len(),

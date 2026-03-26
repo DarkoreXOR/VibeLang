@@ -387,6 +387,8 @@ pub enum AstNode {
         name: String,
         type_params: Vec<GenericParam>,
         variants: Vec<EnumVariantDecl>,
+        /// Host-defined/module-private enum declaration.
+        is_internal: bool,
         name_span: Span,
         span: Span,
         is_exported: bool,

@@ -1,0 +1,17 @@
+import { print_gen } from "std/core";
+import { Task } from "std/async";
+import { fetch, Request, Method, Response } from "std/net";
+
+async func main(): Task {
+    let response = await fetch(Request {
+        endpoint: "https://postman-echo.com/get",
+        method: Method::Get,
+        headers: {
+            "accept": "application/json",
+        },
+        body: "",
+    });
+
+    print_gen(response);
+}
+

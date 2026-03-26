@@ -8,7 +8,9 @@ use crate::value::{StructInstance, Value};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Signed, ToPrimitive, Zero};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use astro_float::{BigFloat, Consts, Radix, RoundingMode};
 
@@ -109,6 +111,7 @@ enum TaskContext {
     },
     WaitAll { tasks: Vec<TaskId>, idx: usize },
     Sleep,
+    HttpFetch { rx: Receiver<FetchResultData> },
 }
 
 #[derive(Debug)]
@@ -116,6 +119,89 @@ enum TaskOutcome {
     Continue,
     YieldAwaited { awaited: TaskId },
     Completed(Value),
+}
+
+#[derive(Debug)]
+struct FetchResultData {
+    status: i64,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+fn dict_from_pairs(pairs: Vec<(String, String)>) -> Value {
+    let entries = pairs
+        .into_iter()
+        .map(|(k, v)| Value::Tuple(vec![Value::String(k), Value::String(v)]))
+        .collect::<Vec<_>>();
+    let mut fields = HashMap::new();
+    fields.insert("entries".to_string(), Value::Array(entries));
+    Value::Struct(Rc::new(RefCell::new(StructInstance {
+        name: "Dict".to_string(),
+        is_unit: false,
+        fields,
+    })))
+}
+
+fn response_struct_value(status: i64, headers: Vec<(String, String)>, body: String) -> Value {
+    let mut fields = HashMap::new();
+    fields.insert("status".to_string(), Value::Int(BigInt::from(status)));
+    fields.insert("headers".to_string(), dict_from_pairs(headers));
+    fields.insert("body".to_string(), Value::String(body));
+    Value::Struct(Rc::new(RefCell::new(StructInstance {
+        name: "Response".to_string(),
+        is_unit: false,
+        fields,
+    })))
+}
+
+fn parse_request_value(
+    request: Value,
+    span: Span,
+) -> Result<(String, String, Vec<(String, String)>, String), VmError> {
+    let Value::Struct(req_rc) = request else {
+        return Err(VmError::new("`fetch` expects `Request` as argument", Some(span)));
+    };
+    let req = req_rc.borrow();
+    if req.name != "Request" {
+        return Err(VmError::new("`fetch` expects `Request` struct", Some(span)));
+    }
+    let endpoint = match req.fields.get("endpoint") {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err(VmError::new("`fetch` request.endpoint must be String", Some(span))),
+    };
+    let method = match req.fields.get("method") {
+        Some(Value::Enum { variant, .. }) => variant.clone(),
+        _ => return Err(VmError::new("`fetch` request.method must be Method enum", Some(span))),
+    };
+    let headers = match req.fields.get("headers") {
+        Some(Value::Struct(dict_rc)) => {
+            let dict = dict_rc.borrow();
+            let entries = match dict.fields.get("entries") {
+                Some(Value::Array(a)) => a,
+                _ => return Err(VmError::new("`fetch` request.headers Dict must contain `entries` array", Some(span))),
+            };
+            let mut out = Vec::with_capacity(entries.len());
+            for e in entries {
+                let Value::Tuple(parts) = e else {
+                    continue;
+                };
+                if parts.len() != 2 {
+                    continue;
+                }
+                let (Value::String(k), Value::String(v)) = (&parts[0], &parts[1]) else {
+                    continue;
+                };
+                out.push((k.clone(), v.clone()));
+            }
+            out
+        }
+        _ => return Err(VmError::new("`fetch` request.headers must be Dict<String, String>", Some(span))),
+    };
+    let body = match req.fields.get("body") {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err(VmError::new("`fetch` request.body must be String", Some(span))),
+    };
+    Ok((endpoint, method, headers, body))
 }
 
 pub fn run_program(bytecode: &ProgramBytecode) -> Result<(), VmError> {
@@ -160,6 +246,30 @@ pub fn run_program_with_builtins(
             match ctx {
                 TaskContext::Sleep => {
                     runtime.complete(task_id, Value::Unit);
+                }
+                TaskContext::HttpFetch { rx } => {
+                    const FETCH_POLL_MS: u64 = 10;
+                    match rx.try_recv() {
+                        Ok(done) => {
+                            let response = response_struct_value(done.status, done.headers, done.body);
+                            runtime.complete(task_id, response);
+                        }
+                        Err(TryRecvError::Empty) => {
+                            runtime.set_sleeping_until(
+                                task_id,
+                                TaskContext::HttpFetch { rx },
+                                now_ms.saturating_add(FETCH_POLL_MS),
+                            );
+                        }
+                        Err(TryRecvError::Disconnected) => {
+                            let response = response_struct_value(
+                                0,
+                                Vec::new(),
+                                "fetch failed: worker disconnected".to_string(),
+                            );
+                            runtime.complete(task_id, response);
+                        }
+                    }
                 }
                 TaskContext::WaitAll { tasks, mut idx } => {
                     loop {
@@ -816,7 +926,7 @@ fn vm_execute_tick(
 
                 // Internal `async func` must be invoked via `MakeDeferredTask` + `await`,
                 // not via synchronous `Call`.
-                if callee == "wait_all_tasks_async" || callee == "sleep" {
+                if callee == "wait_all_tasks_async" || callee == "sleep" || callee == "fetch" {
                     return Err(VmError::new(
                         format!("`{callee}` is async and must be awaited"),
                         Some(span),
@@ -1013,6 +1123,74 @@ fn vm_execute_tick(
 
                     let tid = runtime.alloc_id();
                     runtime.complete(tid, payload);
+                    operand_stack.push(Value::Task(tid));
+                } else if canonical == "fetch" {
+                    let request = match args.into_iter().next() {
+                        Some(v) => v,
+                        None => {
+                            return Err(VmError::new(
+                                "`fetch` expects one Request argument",
+                                Some(span),
+                            ));
+                        }
+                    };
+                    let (endpoint, method, headers, body) = parse_request_value(request, span)?;
+
+                    let (tx, rx) = mpsc::channel::<FetchResultData>();
+                    std::thread::spawn(move || {
+                        let method_key = method.to_ascii_uppercase();
+                        let method = match method_key.as_str() {
+                            "GET" => reqwest::Method::GET,
+                            "HEAD" => reqwest::Method::HEAD,
+                            "POST" => reqwest::Method::POST,
+                            "PUT" => reqwest::Method::PUT,
+                            "DELETE" => reqwest::Method::DELETE,
+                            "CONNECT" => reqwest::Method::CONNECT,
+                            "OPTIONS" => reqwest::Method::OPTIONS,
+                            "TRACE" => reqwest::Method::TRACE,
+                            "PATCH" => reqwest::Method::PATCH,
+                            _ => reqwest::Method::GET,
+                        };
+
+                        let client = reqwest::blocking::Client::new();
+                        let mut req = client.request(method, endpoint);
+                        for (k, v) in headers {
+                            req = req.header(k, v);
+                        }
+                        if !body.is_empty() {
+                            req = req.body(body);
+                        }
+                        let done = match req.send() {
+                            Ok(resp) => {
+                                let status = i64::from(resp.status().as_u16());
+                                let headers = resp
+                                    .headers()
+                                    .iter()
+                                    .filter_map(|(k, v)| {
+                                        Some((k.to_string(), v.to_str().ok()?.to_string()))
+                                    })
+                                    .collect::<Vec<_>>();
+                                let body = match resp.text() {
+                                    Ok(text) => text,
+                                    Err(e) => format!("fetch failed: {}", e),
+                                };
+                                FetchResultData { status, headers, body }
+                            }
+                            Err(e) => FetchResultData {
+                                status: 0,
+                                headers: Vec::new(),
+                                body: format!("fetch failed: {}", e),
+                            },
+                        };
+                        let _ = tx.send(done);
+                    });
+
+                    let tid = runtime.alloc_id();
+                    runtime.set_sleeping_until(
+                        tid,
+                        TaskContext::HttpFetch { rx },
+                        now_ms.saturating_add(1),
+                    );
                     operand_stack.push(Value::Task(tid));
                 } else {
                     // User async function call: create a new execution context.
@@ -1232,8 +1410,17 @@ mod tests {
     use crate::parser::Parser;
     use crate::semantic::check_program;
 
+    fn core_operator_prelude() -> String {
+        let core = include_str!("../std/core.vc");
+        let cut = core
+            .find("export enum Option")
+            .expect("std/core.vc must contain `export enum Option`");
+        core[..cut].to_string()
+    }
+
     fn run_both(src: &str) -> Result<(), String> {
-        let mut lexer = Lexer::new(src);
+        let full = format!("{}\n{}", core_operator_prelude(), src);
+        let mut lexer = Lexer::new(&full);
         let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().map_err(|e| e.to_string())?;
@@ -1246,7 +1433,8 @@ mod tests {
     }
 
     fn run_vm_err_contains(src: &str, needle: &str) {
-        let mut lexer = Lexer::new(src);
+        let full = format!("{}\n{}", core_operator_prelude(), src);
+        let mut lexer = Lexer::new(&full);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
@@ -1265,7 +1453,7 @@ mod tests {
     #[test]
     fn vm_async_sleep_zero_ms() {
         run_both(
-            r#"internal struct Task<T = ()>;
+            r#"struct Task<T = ()>;
                internal async func sleep(ms: Int): Task;
                async func main(): Task {
                    await sleep(0);
@@ -1277,7 +1465,7 @@ mod tests {
     #[test]
     fn vm_async_user_deferred_and_await() {
         run_both(
-            r#"internal struct Task<T = ()>;
+            r#"struct Task<T = ()>;
                async func wrap(x: Int): Task<Int> {
                    return x;
                }

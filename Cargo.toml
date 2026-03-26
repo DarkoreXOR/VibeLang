@@ -8,3 +8,4 @@ rand = "0.10"
 num-bigint = "0.4"
 num-traits = "0.2"
 astro-float = "*"
+reqwest = { version = "0.13.2", features = ["blocking", "rustls"] }
