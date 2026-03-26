@@ -7126,6 +7126,14 @@ mod tests {
         check_src_with_prelude(&prelude, src)
     }
 
+    fn prelude_without_decl(needle: &str) -> String {
+        core_operator_prelude()
+            .lines()
+            .filter(|l| !l.contains(needle))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn example4_passes() {
         let src = include_str!("../examples/example4.vc");
@@ -7205,10 +7213,7 @@ func main() {
 
     #[test]
     fn string_equality_requires_compare_equal_decl() {
-        let prelude = core_operator_prelude().replace(
-            "internal func String::compare_equal(self, other: String): Bool; // String == String\n",
-            "",
-        );
+        let prelude = prelude_without_decl("String::compare_equal");
         let errs = check_src_with_prelude(&prelude, r#"func main() { let _ = "a" == "b"; }"#);
         assert!(
             errs.iter().any(|e| e.message.contains("String::compare_equal")),
@@ -7266,10 +7271,7 @@ func main() {
 
     #[test]
     fn int_plus_requires_binary_add_decl() {
-        let prelude = core_operator_prelude().replace(
-            "internal func Int::binary_add(self, other: Int): Int; // Int + Int\n",
-            "",
-        );
+        let prelude = prelude_without_decl("Int::binary_add");
         let errs = check_src_with_prelude(&prelude, "func main() { let _ = 1 + 2; }");
         assert!(
             errs.iter().any(|e| e.message.contains("Int::binary_add")),
@@ -7280,10 +7282,7 @@ func main() {
 
     #[test]
     fn bool_equality_requires_compare_equal_decl() {
-        let prelude = core_operator_prelude().replace(
-            "internal func Bool::compare_equal(self, other: Bool): Bool; // Bool == Bool\n",
-            "",
-        );
+        let prelude = prelude_without_decl("Bool::compare_equal");
         let errs = check_src_with_prelude(&prelude, "func main() { let _ = true == true; }");
         assert!(
             errs.iter().any(|e| e.message.contains("Bool::compare_equal")),
@@ -7294,10 +7293,7 @@ func main() {
 
     #[test]
     fn bool_and_requires_binary_and_decl() {
-        let prelude = core_operator_prelude().replace(
-            "internal func Bool::binary_and(self, other: Bool): Bool; // Bool && Bool\n",
-            "",
-        );
+        let prelude = prelude_without_decl("Bool::binary_and");
         let errs = check_src_with_prelude(&prelude, "func main() { let _ = true && false; }");
         assert!(
             errs.iter().any(|e| e.message.contains("Bool::binary_and")),
@@ -7308,10 +7304,7 @@ func main() {
 
     #[test]
     fn bool_not_requires_unary_not_decl() {
-        let prelude = core_operator_prelude().replace(
-            "internal func Bool::unary_not(self): Bool; // !Bool\n",
-            "",
-        );
+        let prelude = prelude_without_decl("Bool::unary_not");
         let errs = check_src_with_prelude(&prelude, "func main() { let _ = !true; }");
         assert!(
             errs.iter().any(|e| e.message.contains("Bool::unary_not")),
