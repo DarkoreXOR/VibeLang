@@ -8,12 +8,26 @@ Compiler diagnostics report syntax/semantic/runtime issues with source spans.
 
 - The compiler tries to collect multiple errors when possible.
 - Errors include source spans (line/column ranges).
+- Warnings are non-fatal diagnostics and do not stop execution.
 - CLI output points at source location for easier debugging.
+- For unused-symbol warnings, the caret points to the exact identifier token.
 - Inference diagnostics use human-friendly wording (for example, "an inferred type")
   instead of raw internal solver variable names.
 - Conflict diagnostics are emitted when breadcrumb constraints disagree.
 - Unresolved-type diagnostics are emitted when required concrete positions remain unknown.
 - Type-alias diagnostics include unknown alias names, wrong alias arity, and alias cycle errors.
+
+## Unused warnings
+
+Unused diagnostics are emitted as `semantic warning` and currently include identifier-based checks
+such as:
+
+- imports
+- top-level declarations (`func`, `struct`, `enum`, `type`, globals)
+- function-scope bindings and parameters
+- generic type parameters
+
+Intentional unused names can be prefixed with `_` to suppress these warnings.
 
 ## Example
 
@@ -27,6 +41,36 @@ func main() {
 Typical results:
 - type mismatch for `x`
 - non-`Bool` condition in `if`
+
+## Unused warning example
+
+```vc
+import { print_gen } from "std/core";
+import { Task } from "std/async";
+
+struct S;
+
+func foo() {}
+
+func bar(): Int = 4;
+
+func g<T>(): Int {
+    return 123;
+}
+
+func main() {
+    let b = 0;
+    print_gen(bar());
+    print_gen(g<Int>());
+}
+```
+
+Typical warnings:
+- `unused import 'Task'`
+- `unused struct 'S'`
+- `unused function 'foo'`
+- `unused generic type parameter 'T'`
+- `unused binding 'b'`
 
 ## Guidance
 
