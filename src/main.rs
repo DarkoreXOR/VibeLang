@@ -4,7 +4,7 @@ use std::process;
 
 use vibelang::lexer::Lexer;
 use vibelang::parser::Parser;
-use vibelang::semantic::check_program;
+use vibelang::semantic::{check_program, collect_unused_warnings};
 use vibelang::error::{ParseError, Span};
 use vibelang::bytecode_gen::compile_program;
 use vibelang::module_loader::load_linked_program;
@@ -72,6 +72,30 @@ fn main() {
         }
     };
 
+    let warning_ast = {
+        let warning_file: &'static str = Box::leak(filename.clone().into_boxed_str());
+        let mut warning_lexer = Lexer::new_with_file(&source, warning_file);
+        let warning_tokens = match warning_lexer.tokenize() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("{}", e.format_with_file(filename));
+                print_span_snippet(&source, e.span);
+                process::exit(1);
+            }
+        };
+        let mut warning_parser = Parser::new(warning_tokens);
+        match warning_parser.parse() {
+            Ok(ast) => ast,
+            Err(e) => {
+                eprintln!("{}", e.format_with_file(filename));
+                if let ParseError::UnexpectedToken { span: Some(s), .. } = &e {
+                    print_span_snippet(&source, *s);
+                }
+                process::exit(1);
+            }
+        }
+    };
+
     let ast = if dump_tokens || dump_ast {
         let mut lexer = Lexer::new(&source);
         let tokens = match lexer.tokenize() {
@@ -119,6 +143,17 @@ fn main() {
     };
 
     let sem_errors = check_program(&ast);
+    let sem_warnings = collect_unused_warnings(&warning_ast);
+    for warning in &sem_warnings {
+        let header_path: &str = match warning.span.file {
+            Some(p) => p,
+            None => filename.as_str(),
+        };
+        eprintln!("{}", warning.format_with_file(header_path));
+        print_span_snippet(&source, warning.span);
+        eprintln!();
+    }
+
     if !sem_errors.is_empty() {
         for err in &sem_errors {
             let header_path: &str = match err.span.file {

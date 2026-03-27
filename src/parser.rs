@@ -1,6 +1,6 @@
 pub use crate::ast::{
     AstNode, BinaryOp, CallArg, CompoundOp, ExtensionReceiver, FunctionTypeParam, GenericParam,
-    LambdaBody, LambdaParam, Param, Pattern, PatternElem, TypeExpr, UnaryOp,
+    ImportBinding, LambdaBody, LambdaParam, Param, Pattern, PatternElem, TypeExpr, UnaryOp,
 };
 use crate::error::{ParseError, Span};
 use crate::lexer::{Lexer, Token, TokenKind, EOF_SENTINEL};
@@ -404,14 +404,18 @@ impl Parser {
         let mut bindings = Vec::new();
         if !matches!(self.peek().kind, TokenKind::RBrace) {
             loop {
-                let (export_name, _) = self.take_identifier()?;
-                let local_name = if matches!(self.peek().kind, TokenKind::As) {
+                let (export_name, export_span) = self.take_identifier()?;
+                let (local_name, local_span) = if matches!(self.peek().kind, TokenKind::As) {
                     self.advance();
-                    self.take_identifier()?.0
+                    self.take_identifier()?
                 } else {
-                    export_name.clone()
+                    (export_name.clone(), export_span)
                 };
-                bindings.push((export_name, local_name));
+                bindings.push(ImportBinding {
+                    export_name,
+                    local_name,
+                    local_span,
+                });
                 if matches!(self.peek().kind, TokenKind::Comma) {
                     self.advance();
                     continue;
@@ -1583,7 +1587,7 @@ impl Parser {
         let mut out = Vec::new();
         let mut saw_default = false;
         loop {
-            let (n, _) = self.take_identifier()?;
+            let (n, n_span) = self.take_identifier()?;
             let default = if matches!(self.peek().kind, TokenKind::Eq) {
                 saw_default = true;
                 self.advance();
@@ -1598,7 +1602,11 @@ impl Parser {
                 }
                 None
             };
-            out.push(GenericParam { name: n, default });
+            out.push(GenericParam {
+                name: n,
+                name_span: n_span,
+                default,
+            });
             if matches!(self.peek().kind, TokenKind::Comma) {
                 self.advance();
                 continue;
@@ -3520,7 +3528,7 @@ mod tests {
 
     #[test]
     fn test_parse_example0_2() {
-        let src = include_str!("../examples/example0_2.vc");
+        let src = include_str!("../examples/basics/example0_2.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex example0_2.vc");
         let mut parser = Parser::new(tokens);
@@ -3932,7 +3940,7 @@ mod tests {
 
     #[test]
     fn test_parse_example1() {
-        let src = include_str!("../examples/example1.vc");
+        let src = include_str!("../examples/basics/example1.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
@@ -4028,7 +4036,7 @@ mod tests {
 
     #[test]
     fn test_parse_example2() {
-        let src = include_str!("../examples/example2_0.vc");
+        let src = include_str!("../examples/basics/example2_0.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
@@ -4279,7 +4287,7 @@ mod tests {
 
     #[test]
     fn test_parse_example3_0() {
-        let src = include_str!("../examples/example3_0.vc");
+        let src = include_str!("../examples/basics/example3_0.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
@@ -4333,7 +4341,7 @@ mod tests {
 
     #[test]
     fn test_parse_example3_1() {
-        let src = include_str!("../examples/example3_1.vc");
+        let src = include_str!("../examples/basics/example3_1.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex example3_1.vc");
         let mut parser = Parser::new(tokens);
@@ -4855,7 +4863,7 @@ mod operator_edge_tests {
 
     #[test]
     fn parse_example4_file() {
-        let src = include_str!("../examples/example4.vc");
+        let src = include_str!("../examples/operators/example4.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex example4");
         let mut parser = Parser::new(tokens);

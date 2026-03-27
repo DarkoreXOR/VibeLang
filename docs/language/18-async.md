@@ -66,7 +66,7 @@ async func main(): Task {
 
 ## Valid examples
 
-This is the pattern used by `examples/example28.vc`:
+This is the pattern used by `examples/async/example28.vc`:
 
 ```vc
 async func t1(): Task {

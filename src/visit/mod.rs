@@ -354,7 +354,7 @@ mod tests {
     }
 
     fn parse_example4() -> AstNode {
-        let src = include_str!("../../examples/example4.vc");
+        let src = include_str!("../../examples/operators/example4.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);

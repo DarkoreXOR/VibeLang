@@ -146,3 +146,36 @@ impl fmt::Display for SemanticError {
         )
     }
 }
+
+/// Semantic warning diagnostic (non-fatal, includes a source [`Span`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticWarning {
+    pub message: String,
+    pub span: Span,
+}
+
+impl SemanticWarning {
+    pub fn new(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span,
+        }
+    }
+
+    pub fn format_with_file(&self, path: &str) -> String {
+        format!(
+            "{}:{}:{}: semantic warning: {}",
+            path, self.span.line, self.span.column, self.message
+        )
+    }
+}
+
+impl fmt::Display for SemanticWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}: semantic warning: {}",
+            self.span.line, self.span.column, self.message
+        )
+    }
+}

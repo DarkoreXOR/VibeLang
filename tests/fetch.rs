@@ -4,7 +4,7 @@ use std::process::Command;
 fn fetch_example_stdout_relaxed() {
     let exe = env!("CARGO_BIN_EXE_vibelang");
     let src_path = format!(
-        "{}/examples/fetch.vc",
+        "{}/examples/network/fetch.vc",
         env!("CARGO_MANIFEST_DIR").replace('\\', "/")
     );
 

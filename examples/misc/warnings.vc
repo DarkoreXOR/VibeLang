@@ -1,0 +1,20 @@
+import { print_gen } from "std/core";
+import { Task } from "std/async"; // <- unused `Task`
+
+struct S; // <- unused `S`
+
+func foo() { // <- unused `foo`
+
+}
+
+func bar(): Int = 4;
+
+func g<T>(): Int { // <- unused generic type `T`
+    return 123;
+}
+
+func main() {
+    let b = 0; // <- unused `b`
+    print_gen(bar());
+    print_gen(g<Int>());
+}

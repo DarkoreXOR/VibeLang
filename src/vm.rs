@@ -1575,12 +1575,12 @@ mod tests {
 
     #[test]
     fn vm_struct_example12() {
-        run_both(include_str!("../examples/example12.vc")).unwrap();
+        run_both(include_str!("../examples/functions/example12.vc")).unwrap();
     }
 
     #[test]
     fn vm_arrow_example13() {
-        run_both(include_str!("../examples/example13.vc")).unwrap();
+        run_both(include_str!("../examples/functions/example13.vc")).unwrap();
     }
 
     #[test]
@@ -1598,12 +1598,12 @@ func main() {
 
     #[test]
     fn vm_enum_example14() {
-        run_both(include_str!("../examples/example14.vc")).unwrap();
+        run_both(include_str!("../examples/types/example14.vc")).unwrap();
     }
 
     #[test]
     fn vm_enum_example15() {
-        run_both(include_str!("../examples/example15.vc")).unwrap();
+        run_both(include_str!("../examples/types/example15.vc")).unwrap();
     }
 
     #[test]
@@ -1636,7 +1636,7 @@ func main() {
 
     #[test]
     fn vm_example17_defaults_and_named_args() {
-        run_both(include_str!("../examples/example17.vc")).unwrap();
+        run_both(include_str!("../examples/functions/example17.vc")).unwrap();
     }
 
     #[test]
@@ -1785,17 +1785,17 @@ func main() {
 
     #[test]
     fn vm_arrays_example9() {
-        run_both(include_str!("../examples/example9.vc")).unwrap();
+        run_both(include_str!("../examples/collections/example9.vc")).unwrap();
     }
 
     #[test]
     fn vm_any_example10() {
-        run_both(include_str!("../examples/example10.vc")).unwrap();
+        run_both(include_str!("../examples/types/example10.vc")).unwrap();
     }
 
     #[test]
     fn vm_generics_example11() {
-        run_both(include_str!("../examples/example11.vc")).unwrap();
+        run_both(include_str!("../examples/types/example11.vc")).unwrap();
     }
 
     #[test]

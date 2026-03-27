@@ -1327,7 +1327,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_example0_2() {
-        let src = include_str!("../examples/example0_2.vc");
+        let src = include_str!("../examples/basics/example0_2.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("example0_2.vc should tokenize");
         let strings = tokens
@@ -1453,7 +1453,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_example3_1() {
-        let src = include_str!("../examples/example3_1.vc");
+        let src = include_str!("../examples/basics/example3_1.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("example3_1.vc");
         let idents: Vec<_> = tokens
@@ -1471,7 +1471,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_example2() {
-        let src = include_str!("../examples/example2_0.vc");
+        let src = include_str!("../examples/basics/example2_0.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("example2_0.vc");
         assert!(tokens.iter().any(|t| {
@@ -1485,7 +1485,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_example1() {
-        let src = include_str!("../examples/example1.vc");
+        let src = include_str!("../examples/basics/example1.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("example1.vc should tokenize");
         let has_func = tokens.iter().any(|t| {
@@ -1500,7 +1500,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_example4() {
-        let src = include_str!("../examples/example4.vc");
+        let src = include_str!("../examples/operators/example4.vc");
         let mut lexer = Lexer::new(src);
         let tokens = lexer.tokenize().expect("example4.vc should tokenize");
         assert!(matches!(tokens.last().unwrap().kind, TokenKind::Eof));

@@ -6,7 +6,7 @@ use astro_float::{BigFloat, Consts, Radix, RoundingMode};
 fn float_example29_stdout_exact() {
     let exe = env!("CARGO_BIN_EXE_vibelang");
     let src_path = format!(
-        "{}/examples/example29.vc",
+        "{}/examples/types/example29.vc",
         env!("CARGO_MANIFEST_DIR").replace('\\', "/")
     );
 

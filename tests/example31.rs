@@ -4,7 +4,7 @@ use std::process::Command;
 fn example31_stdout_exact() {
     let exe = env!("CARGO_BIN_EXE_vibelang");
     let src_path = format!(
-        "{}/examples/example31.vc",
+        "{}/examples/collections/example31.vc",
         env!("CARGO_MANIFEST_DIR").replace('\\', "/")
     );
 

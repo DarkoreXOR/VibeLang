@@ -421,7 +421,10 @@ fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
                 module_path,
                 ..
             } => imports.push(ImportDecl {
-                bindings: bindings.clone(),
+                bindings: bindings
+                    .iter()
+                    .map(|b| (b.export_name.clone(), b.local_name.clone()))
+                    .collect(),
                 module_path: module_path.clone(),
             }),
             AstNode::ExportAlias { from, to, .. } => {
@@ -603,7 +606,7 @@ mod tests {
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
-        let ast = load_linked_program("examples/example18.vc").expect("load");
+        let ast = load_linked_program("examples/modules/example18.vc").expect("load");
         std::env::set_current_dir(restore_dir).expect("restore cwd");
         let errs = check_program(&ast);
         assert!(errs.is_empty(), "{:?}", errs);
@@ -617,7 +620,7 @@ mod tests {
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
-        let ast = load_linked_program("examples/example20.vc").expect("load");
+        let ast = load_linked_program("examples/modules/example20.vc").expect("load");
         std::env::set_current_dir(restore_dir).expect("restore cwd");
         let errs = check_program(&ast);
         assert!(errs.is_empty(), "{:?}", errs);
@@ -631,7 +634,7 @@ mod tests {
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
-        let ast = load_linked_program("examples/example21.vc").expect("load");
+        let ast = load_linked_program("examples/modules/example21.vc").expect("load");
         std::env::set_current_dir(restore_dir).expect("restore cwd");
         let errs = check_program(&ast);
         assert!(errs.is_empty(), "{:?}", errs);
@@ -700,7 +703,7 @@ mod tests {
         let restore_dir = std::env::current_dir().expect("cwd");
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         std::env::set_current_dir(&manifest_dir).expect("chdir");
-        let ast = load_linked_program("examples/fetch.vc").expect("load");
+        let ast = load_linked_program("examples/network/fetch.vc").expect("load");
         std::env::set_current_dir(restore_dir).expect("restore cwd");
 
         let items = match ast {

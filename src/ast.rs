@@ -25,6 +25,7 @@ pub struct ExtensionReceiver {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericParam {
     pub name: String,
+    pub name_span: Span,
     pub default: Option<TypeExpr>,
 }
 
@@ -205,10 +206,17 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ImportBinding {
+    pub export_name: String,
+    pub local_name: String,
+    pub local_span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum AstNode {
     /// `import { A, B as C } from "path";` — each pair is (exported name from module, local name).
     Import {
-        bindings: Vec<(String, String)>,
+        bindings: Vec<ImportBinding>,
         module_path: String,
         span: Span,
     },

@@ -6,11 +6,17 @@ use crate::ast::{
     AstNode, BinaryOp, CallArg, CompoundOp, FunctionTypeParam, GenericParam, Param, Pattern,
     PatternElem, TypeExpr, UnaryOp,
 };
-use crate::error::{SemanticError, Span};
+use crate::error::{SemanticError, SemanticWarning, Span};
 #[path = "semantic/infer.rs"]
 mod infer;
 #[path = "semantic/typecheck.rs"]
 mod typecheck;
+#[path = "semantic/unused_warnings.rs"]
+mod unused_warnings;
+
+pub fn collect_unused_warnings(ast: &AstNode) -> Vec<SemanticWarning> {
+    unused_warnings::collect_unused_warnings(ast)
+}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Ty {
@@ -7136,42 +7142,42 @@ mod tests {
 
     #[test]
     fn example4_passes() {
-        let src = include_str!("../examples/example4.vc");
+        let src = include_str!("../examples/operators/example4.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }
 
     #[test]
     fn example5_passes() {
-        let src = include_str!("../examples/example5.vc");
+        let src = include_str!("../examples/basics/example5.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }
 
     #[test]
     fn example7_passes() {
-        let src = include_str!("../examples/example7.vc");
+        let src = include_str!("../examples/operators/example7.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }
 
     #[test]
     fn example13_arrow_function_infers_return_type() {
-        let src = include_str!("../examples/example13.vc");
+        let src = include_str!("../examples/functions/example13.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }
 
     #[test]
     fn example14_enum_types() {
-        let src = include_str!("../examples/example14.vc");
+        let src = include_str!("../examples/types/example14.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }
 
     #[test]
     fn example15_enum_construction_syntax() {
-        let src = include_str!("../examples/example15.vc");
+        let src = include_str!("../examples/types/example15.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }
@@ -7556,7 +7562,7 @@ func main() { f("a" + 1, 0); }"#,
 
     #[test]
     fn example17_defaults_and_named_args() {
-        let errs = check_src(include_str!("../examples/example17.vc"));
+        let errs = check_src(include_str!("../examples/functions/example17.vc"));
         assert!(errs.is_empty(), "{:?}", errs);
     }
 
@@ -7755,7 +7761,7 @@ func main() { f("a" + 1, 0); }"#,
 
     #[test]
     fn example8_passes() {
-        let src = include_str!("../examples/example8.vc");
+        let src = include_str!("../examples/basics/example8.vc");
         let errs = check_src(src);
         assert!(errs.is_empty(), "{:?}", errs);
     }

@@ -114,11 +114,11 @@ impl Visit for PrettyPrinter {
             } => {
                 let s = bindings
                     .iter()
-                    .map(|(e, l)| {
-                        if e == l {
-                            e.clone()
+                    .map(|b| {
+                        if b.export_name == b.local_name {
+                            b.export_name.clone()
                         } else {
-                            format!("{e} as {l}")
+                            format!("{} as {}", b.export_name, b.local_name)
                         }
                     })
                     .collect::<Vec<_>>()
