@@ -16,6 +16,7 @@ Compiler diagnostics report syntax/semantic/runtime issues with source spans.
 - Conflict diagnostics are emitted when breadcrumb constraints disagree.
 - Unresolved-type diagnostics are emitted when required concrete positions remain unknown.
 - Type-alias diagnostics include unknown alias names, wrong alias arity, and alias cycle errors.
+- Const diagnostics include reassignment errors (for example, `cannot assign to constant 'PI'`).
 
 ## Unused warnings
 

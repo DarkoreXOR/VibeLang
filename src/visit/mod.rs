@@ -88,7 +88,7 @@ pub trait Visit {
 
 pub fn walk_ast_node<V: Visit + ?Sized>(visitor: &mut V, node: &AstNode) {
     match node {
-        AstNode::Import { .. } | AstNode::ExportAlias { .. } => {}
+        AstNode::Import { .. } | AstNode::ExportAlias { .. } | AstNode::ExportName { .. } => {}
         AstNode::Program(items) => visitor.visit_program(items),
         AstNode::SingleLineComment(text) => visitor.visit_single_line_comment(text),
         AstNode::MultiLineComment(text) => visitor.visit_multi_line_comment(text),

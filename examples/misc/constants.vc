@@ -1,0 +1,24 @@
+import { print_gen } from "std/core";
+
+const F: Int = 1; // top-level constant, should be in UPPER_CASE
+
+const PI: Float = 3.1415; // 
+
+const APP_VERSION = "1.0.1-alpha"; // infer constant type as `String`
+
+export PI; // allow export constants by identifier
+
+export const SOME_CONST: Bool = false; // allow export with full declaration
+
+func main() {
+    print_gen(F);
+    print_gen(PI);
+    print_gen(APP_VERSION);
+    print_gen(SOME_CONST);
+
+    let b = PI;
+
+    b = 2.71;
+
+    // PI = 0.0; <- error: constants are not immutable
+}

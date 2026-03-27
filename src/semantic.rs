@@ -1,6 +1,6 @@
 //! Semantic analysis: symbols, types, tuples, patterns, definite assignment.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     AstNode, BinaryOp, CallArg, CompoundOp, FunctionTypeParam, GenericParam, Param, Pattern,
@@ -67,6 +67,7 @@ struct GlobalDecl {
     pattern: Pattern,
     type_annotation: Option<TypeExpr>,
     initializer: Option<Box<AstNode>>,
+    is_const: bool,
     span: Span,
 }
 
@@ -93,7 +94,7 @@ struct AliasDef {
 #[derive(Clone)]
 enum NameRes {
     Local(usize),
-    Global(Ty),
+    Global { ty: Ty, is_const: bool },
 }
 
 struct BodyCtx<'a> {
@@ -102,6 +103,7 @@ struct BodyCtx<'a> {
     enums: &'a HashMap<String, EnumDef>,
     aliases: &'a HashMap<String, AliasDef>,
     globals: &'a HashMap<String, Ty>,
+    global_consts: &'a HashSet<String>,
     /// `method_name` -> callee keys for generic array extensions, e.g. `len` -> `["[T]::len", ...]`.
     generic_array_ext: &'a HashMap<String, Vec<String>>,
     /// `method_name` -> callee keys for generic enum extensions, e.g. `is_ok` -> `["Result<T, E>::is_ok"]`.
@@ -111,6 +113,7 @@ struct BodyCtx<'a> {
     scopes: Vec<HashMap<String, usize>>,
     bindings_ty: Vec<Option<Ty>>,
     assigned: Vec<bool>,
+    binding_is_const: Vec<bool>,
     loop_depth: usize,
     /// True while type-checking an `async func` / `internal async func` body.
     in_async: bool,
@@ -124,6 +127,7 @@ impl<'a> BodyCtx<'a> {
         enums: &'a HashMap<String, EnumDef>,
         aliases: &'a HashMap<String, AliasDef>,
         globals: &'a HashMap<String, Ty>,
+        global_consts: &'a HashSet<String>,
         generic_array_ext: &'a HashMap<String, Vec<String>>,
         generic_enum_ext: &'a HashMap<String, Vec<String>>,
         generic_struct_ext: &'a HashMap<String, Vec<String>>,
@@ -134,12 +138,14 @@ impl<'a> BodyCtx<'a> {
             enums,
             aliases,
             globals,
+            global_consts,
             generic_array_ext,
             generic_enum_ext,
             generic_struct_ext,
             scopes: Vec::new(),
             bindings_ty: Vec::new(),
             assigned: Vec::new(),
+            binding_is_const: Vec::new(),
             loop_depth: 0,
             in_async: false,
             infer_ctx: infer::InferCtx::default(),
@@ -162,7 +168,10 @@ impl<'a> BodyCtx<'a> {
         }
         self.globals
             .get(name)
-            .map(|ty| NameRes::Global(ty.clone()))
+            .map(|ty| NameRes::Global {
+                ty: ty.clone(),
+                is_const: self.global_consts.contains(name),
+            })
     }
 
     fn declare_param(&mut self, p: &Param, ty: Ty, errors: &mut Vec<SemanticError>) {
@@ -180,6 +189,7 @@ impl<'a> BodyCtx<'a> {
         let id = self.bindings_ty.len();
         self.bindings_ty.push(Some(ty));
         self.assigned.push(true);
+        self.binding_is_const.push(false);
         map.insert(p.name.clone(), id);
     }
 
@@ -189,6 +199,7 @@ impl<'a> BodyCtx<'a> {
         name_span: Span,
         ann_ty: Option<Ty>,
         init: Option<&AstNode>,
+        is_const: bool,
         errors: &mut Vec<SemanticError>,
     ) {
         let expected_for_check = ann_ty.clone();
@@ -204,6 +215,7 @@ impl<'a> BodyCtx<'a> {
         let stored_ty = ann_ty.or_else(|| Some(self.infer_ctx.fresh_var()));
         self.bindings_ty.push(stored_ty);
         self.assigned.push(false);
+        self.binding_is_const.push(is_const);
         map.insert(name.to_string(), id);
 
         if let Some(init_expr) = init {
@@ -239,6 +251,7 @@ impl<'a> BodyCtx<'a> {
         let id = self.bindings_ty.len();
         self.bindings_ty.push(Some(ty));
         self.assigned.push(true);
+        self.binding_is_const.push(false);
         map.insert(name.to_string(), id);
     }
 }
@@ -1105,12 +1118,14 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
             AstNode::StructDef { .. } => {}
             AstNode::EnumDef { .. } => {}
             AstNode::TypeAlias { .. } => {}
-            AstNode::Import { .. } | AstNode::ExportAlias { .. } => {}
+            AstNode::Import { .. } | AstNode::ExportAlias { .. } | AstNode::ExportName { .. } => {}
             AstNode::Let {
                 pattern,
                 type_annotation,
                 initializer,
+                is_const,
                 span,
+                ..
             } => {
                 for (n, sp) in collect_pattern_binding_names(pattern) {
                     if defined_names.contains_key(&n) {
@@ -1126,13 +1141,14 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                     pattern: pattern.clone(),
                     type_annotation: type_annotation.clone(),
                     initializer: initializer.clone(),
+                    is_const: *is_const,
                     span: *span,
                 });
             }
             AstNode::SingleLineComment(_) | AstNode::MultiLineComment(_) => {}
             _ => {
                 errors.push(SemanticError::new(
-                    "only `import`, `internal func`, `func`, `type`, `let`, and comments are allowed at the top level",
+                    "only `import`, `internal func`, `func`, `type`, `let`/`const`, and comments are allowed at the top level",
                     span_of_item(item),
                 ));
             }
@@ -1147,6 +1163,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
     }
 
     let mut globals: HashMap<String, Ty> = HashMap::new();
+    let mut global_consts: HashSet<String> = HashSet::new();
     for decl in &global_order {
         type_check_global_decl(
             decl,
@@ -1156,6 +1173,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
             &aliases,
             &mut errors,
             &mut globals,
+            &mut global_consts,
             &generic_array_ext,
             &generic_enum_ext,
             &generic_struct_ext,
@@ -1223,6 +1241,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
                     &enums,
                     &aliases,
                     &globals,
+                    &global_consts,
                     &generic_array_ext,
                     &generic_enum_ext,
                     &generic_struct_ext,
@@ -1309,6 +1328,7 @@ pub fn check_program(ast: &AstNode) -> Vec<SemanticError> {
             &enums,
             &aliases,
             &globals,
+            &global_consts,
             &generic_array_ext,
             &generic_enum_ext,
             &generic_struct_ext,
@@ -1410,6 +1430,7 @@ fn type_check_global_decl(
     aliases: &HashMap<String, AliasDef>,
     errors: &mut Vec<SemanticError>,
     globals: &mut HashMap<String, Ty>,
+    global_consts: &mut HashSet<String>,
     generic_array_ext: &HashMap<String, Vec<String>>,
     generic_enum_ext: &HashMap<String, Vec<String>>,
     generic_struct_ext: &HashMap<String, Vec<String>>,
@@ -1418,12 +1439,14 @@ fn type_check_global_decl(
     let ann = decl.type_annotation.as_ref();
 
     let prior_globals = globals.clone();
+    let prior_global_consts = global_consts.clone();
     let mut expr_ctx = BodyCtx::new(
         registry,
         structs,
         enums,
         aliases,
         &prior_globals,
+        &prior_global_consts,
         generic_array_ext,
         generic_enum_ext,
         generic_struct_ext,
@@ -1471,10 +1494,16 @@ fn type_check_global_decl(
                         }
                     }
                     globals.insert(name.clone(), et);
+                    if decl.is_const {
+                        global_consts.insert(name.clone());
+                    }
                 }
                 (None, Some(expr)) => {
                     if let Some(got) = check_expr(expr, &mut expr_ctx, errors) {
                         globals.insert(name.clone(), got);
+                        if decl.is_const {
+                            global_consts.insert(name.clone());
+                        }
                     }
                 }
                 _ => {
@@ -2234,6 +2263,7 @@ fn check_statement(
             pattern,
             type_annotation,
             initializer,
+            is_const,
             ..
         } => {
             let ann_ty = type_annotation
@@ -2273,6 +2303,7 @@ fn check_statement(
                             }
                             None => got_ty,
                         };
+                        let base_len = ctx.binding_is_const.len();
                         let _ = declare_let_pattern(
                             pattern,
                             &final_ty,
@@ -2281,15 +2312,27 @@ fn check_statement(
                             ctx,
                             errors,
                         );
+                        if *is_const {
+                            for i in base_len..ctx.binding_is_const.len() {
+                                ctx.binding_is_const[i] = true;
+                            }
+                        }
                     }
                 }
                 None => {
+                    if *is_const {
+                        errors.push(SemanticError::new(
+                            "`const` requires an initializer",
+                            span_of_pattern(pattern),
+                        ));
+                        return StmtFlow::Next(true);
+                    }
                     if let Some(a) = ann_ty {
                         let _ = declare_let_pattern(pattern, &a, None, false, ctx, errors);
                     } else if let Pattern::Binding { name, name_span } = pattern {
                         // Deferred local inference:
                         // allow `let a;` and infer `a` from the first assignment.
-                        ctx.declare_binding(name, *name_span, None, None, errors);
+                        ctx.declare_binding(name, *name_span, None, None, false, errors);
                     } else {
                         errors.push(SemanticError::new(
                             "`let` requires a type annotation when there is no initializer",
@@ -2700,7 +2743,15 @@ fn check_assign_expr(
         AstNode::Identifier { name, span } => {
             let expected_owned: Option<Ty> = match ctx.lookup(name) {
                 Some(NameRes::Local(id)) => ctx.bindings_ty[id].clone(),
-                Some(NameRes::Global(ty)) => Some(ty),
+                Some(NameRes::Global { ty, is_const }) => {
+                    if is_const {
+                        errors.push(SemanticError::new(
+                            format!("cannot assign to constant `{name}`"),
+                            *span,
+                        ));
+                    }
+                    Some(ty)
+                }
                 None => None,
             };
             let Some(got) = check_expr_expected(rhs, ctx, errors, expected_owned.as_ref()) else {
@@ -3138,6 +3189,7 @@ fn declare_let_pattern_elem(
                     *name_span,
                     Some(subty.clone()),
                     None,
+                    false,
                     errors,
                 );
             }
@@ -3196,6 +3248,7 @@ fn declare_let_pattern(
                     *name_span,
                     Some(ty.clone()),
                     init,
+                    false,
                     errors,
                 );
             }
@@ -3596,7 +3649,15 @@ fn check_assign_pattern(
     let expected_owned: Option<Ty> = match pattern {
         Pattern::Binding { name, .. } => match ctx.lookup(name) {
             Some(NameRes::Local(id)) => ctx.bindings_ty[id].clone(),
-            Some(NameRes::Global(ty)) => Some(ty),
+            Some(NameRes::Global { ty, is_const }) => {
+                if is_const {
+                    errors.push(SemanticError::new(
+                        format!("cannot assign to constant `{name}`"),
+                        span_of_pattern(pattern),
+                    ));
+                }
+                Some(ty)
+            }
             None => None,
         },
         _ => None,
@@ -3648,11 +3709,25 @@ fn assign_pattern_types(
                 *name_span,
             )),
             Some(NameRes::Local(id)) => {
+                if ctx.binding_is_const[id] {
+                    errors.push(SemanticError::new(
+                        format!("cannot assign to constant `{name}`"),
+                        *name_span,
+                    ));
+                    return;
+                }
                 if unify_binding(ctx, id, ty.clone(), expr_span(value), errors) {
                     ctx.assigned[id] = true;
                 }
             }
-            Some(NameRes::Global(ety)) => {
+            Some(NameRes::Global { ty: ety, is_const }) => {
+                if is_const {
+                    errors.push(SemanticError::new(
+                        format!("cannot assign to constant `{name}`"),
+                        *name_span,
+                    ));
+                    return;
+                }
                 if ty != &ety {
                     errors.push(SemanticError::new(
                         format!(
@@ -5321,7 +5396,7 @@ fn check_expr(
                     }
                 }
             }
-            Some(NameRes::Global(ty)) => Some(ty.clone()),
+            Some(NameRes::Global { ty, .. }) => Some(ty.clone()),
         },
         AstNode::TypeValue { type_name, span } => {
             if let Ok(te) = crate::parser::Parser::parse_type_expr_from_source(type_name) {

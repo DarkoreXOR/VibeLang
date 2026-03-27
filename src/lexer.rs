@@ -23,6 +23,8 @@ pub enum TokenKind {
     Identifier(String),
     /// Keyword `let`
     Let,
+    /// Keyword `const`
+    Const,
     /// Keyword `true` / `false`
     True,
     False,
@@ -343,6 +345,7 @@ impl Lexer {
         let span = self.span_at(start, self.position - start);
         let kind = match name.as_str() {
             "let" => TokenKind::Let,
+            "const" => TokenKind::Const,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "if" => TokenKind::If,

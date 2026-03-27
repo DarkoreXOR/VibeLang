@@ -226,6 +226,12 @@ pub enum AstNode {
         to: String,
         span: Span,
     },
+    /// `export Name;` — export a previously declared symbol by its local name.
+    ExportName {
+        name: String,
+        name_span: Span,
+        span: Span,
+    },
     SingleLineComment(String),
     MultiLineComment(String),
     IntegerLiteral {
@@ -429,6 +435,10 @@ pub enum AstNode {
         pattern: Pattern,
         type_annotation: Option<TypeExpr>,
         initializer: Option<Box<AstNode>>,
+        /// `true` for `const` declarations.
+        is_const: bool,
+        /// `true` for `export const ...;` declarations.
+        is_exported: bool,
         span: Span,
     },
     /// `pattern = expr;` or `(a, b) = t;` — irrefutable pattern on the left.

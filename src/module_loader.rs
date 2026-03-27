@@ -93,7 +93,7 @@ pub fn load_linked_program(entry_file: &str) -> Result<AstNode, ModuleLoadError>
         'items: for item in &module.items {
             if matches!(
                 item,
-                AstNode::Import { .. } | AstNode::ExportAlias { .. }
+                AstNode::Import { .. } | AstNode::ExportAlias { .. } | AstNode::ExportName { .. }
             ) {
                 continue 'items;
             }
@@ -155,6 +155,12 @@ fn item_named_export(item: &AstNode) -> Option<(&str, bool)> {
         | AstNode::EnumDef {
             name, is_exported, ..
         } => Some((name.as_str(), *is_exported)),
+        AstNode::Let {
+            pattern: crate::ast::Pattern::Binding { name, .. },
+            is_const: true,
+            is_exported,
+            ..
+        } => Some((name.as_str(), *is_exported)),
         _ => None,
     }
 }
@@ -165,6 +171,11 @@ fn declaration_base_name(item: &AstNode) -> Option<&str> {
         | AstNode::Function { name, .. }
         | AstNode::StructDef { name, .. }
         | AstNode::EnumDef { name, .. } => Some(name.as_str()),
+        AstNode::Let {
+            pattern: crate::ast::Pattern::Binding { name, .. },
+            is_const: true,
+            ..
+        } => Some(name.as_str()),
         _ => None,
     }
 }
@@ -249,6 +260,27 @@ fn rename_declaration(item: AstNode, new_name: &str) -> AstNode {
             name_span,
             span,
             is_exported: false,
+        },
+        AstNode::Let {
+            pattern,
+            type_annotation,
+            initializer,
+            span,
+            is_const: true,
+            ..
+        } => AstNode::Let {
+            pattern: match pattern {
+                crate::ast::Pattern::Binding { name_span, .. } => crate::ast::Pattern::Binding {
+                    name: new_name.to_string(),
+                    name_span,
+                },
+                other => other,
+            },
+            type_annotation,
+            initializer,
+            is_const: true,
+            is_exported: false,
+            span,
         },
         other => other,
     }
@@ -431,6 +463,10 @@ fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
                 exports.insert(to.clone());
                 export_sources.insert(to.clone(), from.clone());
             }
+            AstNode::ExportName { name, .. } => {
+                exports.insert(name.clone());
+                export_sources.insert(name.clone(), name.clone());
+            }
             AstNode::InternalFunction {
                 name, is_exported, ..
             }
@@ -442,6 +478,17 @@ fn parse_module_file(path: &Path) -> Result<ModuleData, ModuleLoadError> {
             }
             | AstNode::EnumDef {
                 name, is_exported, ..
+            } => {
+                if *is_exported {
+                    exports.insert(name.clone());
+                    export_sources.insert(name.clone(), name.clone());
+                }
+            }
+            AstNode::Let {
+                pattern: crate::ast::Pattern::Binding { name, .. },
+                is_const: true,
+                is_exported,
+                ..
             } => {
                 if *is_exported {
                     exports.insert(name.clone());

@@ -456,6 +456,7 @@ impl<'a> FnCtx<'a> {
             | AstNode::Function { .. }
             | AstNode::Import { .. }
             | AstNode::ExportAlias { .. }
+            | AstNode::ExportName { .. }
             | AstNode::StructDef { .. }
             | AstNode::EnumDef { .. }
             | AstNode::TypeAlias { .. }

@@ -96,10 +96,22 @@ impl Parser {
                         span: export_span,
                     });
                 }
+                if matches!(self.peek().kind, TokenKind::Identifier(_))
+                    && matches!(self.peek_n(1).kind, TokenKind::Semicolon)
+                {
+                    let (name, name_span) = self.take_identifier()?;
+                    self.expect_semicolon()?;
+                    return Ok(AstNode::ExportName {
+                        name,
+                        name_span,
+                        span: export_span,
+                    });
+                }
                 let item = match self.peek().kind {
                     TokenKind::Struct => self.parse_struct_definition(false)?,
                     TokenKind::Enum => self.parse_enum_definition(false)?,
                     TokenKind::Type => self.parse_type_alias_definition()?,
+                    TokenKind::Const => self.parse_const_statement(true)?,
                     TokenKind::Async => {
                         self.advance(); // `async`
                         self.expect_func_after_async()?;
@@ -119,6 +131,7 @@ impl Parser {
                 self.mark_exported(item)
             }
             TokenKind::Let => self.parse_let_statement(true, true),
+            TokenKind::Const => self.parse_const_statement(false),
             TokenKind::Struct => self.parse_struct_definition(false),
             TokenKind::Enum => self.parse_enum_definition(false),
             TokenKind::Type => self.parse_type_alias_definition(),
@@ -388,6 +401,21 @@ impl Parser {
                 span,
                 is_exported: true,
             },
+            AstNode::Let {
+                pattern,
+                type_annotation,
+                initializer,
+                is_const: true,
+                span,
+                ..
+            } => AstNode::Let {
+                pattern,
+                type_annotation,
+                initializer,
+                is_const: true,
+                is_exported: true,
+                span,
+            },
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     message: "item cannot be exported".to_string(),
@@ -489,6 +517,32 @@ impl Parser {
             pattern,
             type_annotation,
             initializer,
+            is_const: false,
+            is_exported: false,
+            span,
+        })
+    }
+
+    fn parse_const_statement(&mut self, already_consumed_export: bool) -> Result<AstNode, ParseError> {
+        let span = self.peek().span;
+        self.advance(); // `const`
+        let (name, name_span) = self.take_identifier()?;
+        let pattern = Pattern::Binding { name, name_span };
+        let type_annotation = if matches!(self.peek().kind, TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
+        self.expect_eq()?;
+        let initializer = Some(Box::new(self.parse_expression()?));
+        self.expect_semicolon()?;
+        Ok(AstNode::Let {
+            pattern,
+            type_annotation,
+            initializer,
+            is_const: true,
+            is_exported: already_consumed_export,
             span,
         })
     }
@@ -1785,6 +1839,7 @@ impl Parser {
             }),
             TokenKind::Identifier(ref s) if s == "return" => self.parse_return_statement(),
             TokenKind::Let => self.parse_let_statement(false, false),
+            TokenKind::Const => self.parse_const_statement(false),
             TokenKind::If => self.parse_if_statement(),
             TokenKind::Match => {
                 let m = self.parse_match_expression()?;

@@ -128,6 +128,9 @@ impl Visit for PrettyPrinter {
             AstNode::ExportAlias { from, to, .. } => {
                 self.line(&format!("ExportAlias {{ {from} as {to} }}"));
             }
+            AstNode::ExportName { name, .. } => {
+                self.line(&format!("ExportName {{ {name} }}"));
+            }
             AstNode::Program(items) => {
                 self.line("Program");
                 self.indent += 1;
@@ -487,13 +490,19 @@ impl Visit for PrettyPrinter {
             AstNode::Let {
                 type_annotation,
                 initializer,
+                is_const,
+                is_exported,
                 ..
             } => {
                 let tn = type_annotation
                     .as_ref()
                     .map(|t| format!("Some({})", Self::fmt_type_expr(t)))
                     .unwrap_or_else(|| "None".to_string());
-                self.line(&format!("Let {{ type: {tn} }}"));
+                let kind = if *is_const { "Const" } else { "Let" };
+                self.line(&format!(
+                    "{kind} {{ type: {tn}, exported: {} }}",
+                    if *is_exported { "true" } else { "false" }
+                ));
                 if let Some(v) = initializer {
                     self.indent += 1;
                     self.visit_ast_node(v.as_ref());
